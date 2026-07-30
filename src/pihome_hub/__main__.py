@@ -50,7 +50,7 @@ def render_configuration_error(exc: ValidationError) -> str:
         "  cp .env.example .env && chmod 600 .env",
         '  python -c "import secrets; print(secrets.token_urlsafe(48))"',
         "",
-        "See docs/configuration.md for the full list of settings.",
+        "Every setting is documented in .env.example and in README.md.",
     ]
     return "\n".join(lines)
 
@@ -71,15 +71,21 @@ def main() -> None:
         sys.stderr.write(f"pihome-hub: {exc}\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
-    uvicorn.run(
-        create_app(settings, relay_service=relay_service),
-        host=settings.host,
-        port=settings.port,
-        server_header=False,
-        access_log=settings.access_log,
-        # Logging is already configured by create_app(); leave it alone.
-        log_config=None,
-    )
+    # This function built the service, so this function releases it. The lifespan
+    # only closes a service it created itself, so that an app handed one does not
+    # pull GPIO pins out from under whoever still holds a reference.
+    try:
+        uvicorn.run(
+            create_app(settings, relay_service=relay_service),
+            host=settings.host,
+            port=settings.port,
+            server_header=False,
+            access_log=settings.access_log,
+            # Logging is already configured by create_app(); leave it alone.
+            log_config=None,
+        )
+    finally:
+        relay_service.close()
 
 
 if __name__ == "__main__":

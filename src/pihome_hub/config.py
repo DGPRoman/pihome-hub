@@ -101,7 +101,8 @@ class Settings(BaseSettings):
             if marker in normalised:
                 msg = (
                     f"API key looks like example config (contains {marker!r}). "
-                    "Generate a real one, e.g. `python -m secrets token_urlsafe 48`."
+                    'Generate a real one: python -c "import secrets; '
+                    'print(secrets.token_urlsafe(48))"'
                 )
                 raise ValueError(msg)
 

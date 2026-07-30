@@ -5,7 +5,6 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pihome_hub.app import create_app
@@ -26,17 +25,25 @@ class TestKeyRequired:
     def test_correct_key_is_accepted(self, client: TestClient) -> None:
         assert client.get("/v1/relays", headers=RELAY_HEADERS).status_code == HTTPStatus.OK
 
-    def test_every_relay_route_is_guarded(self, client: TestClient, app: FastAPI) -> None:
-        """No relay route may be reachable without a key."""
-        unauthenticated = [
-            client.get("/v1/relays"),
-            client.put("/v1/relays", json={"on": True}),
-            client.post("/v1/relays/toggle"),
-            client.get("/v1/relays/porch-light"),
-            client.put("/v1/relays/porch-light", json={"on": True}),
-            client.post("/v1/relays/porch-light/toggle"),
-        ]
-        assert [r.status_code for r in unauthenticated] == [HTTPStatus.UNAUTHORIZED] * 6
+    def test_every_versioned_route_is_guarded(
+        self, client: TestClient, registered_routes: list[tuple[str, str]]
+    ) -> None:
+        """Driven by route enumeration, not a hand-written list.
+
+        A new ``/v1`` route added without the auth dependency fails here, which a
+        hardcoded list of requests would never have noticed.
+        """
+        versioned = [(m, p) for m, p in registered_routes if p.startswith("/v1")]
+        assert versioned, "no /v1 routes found to check"
+
+        unguarded = []
+        for method, path in versioned:
+            concrete = path.replace("{relay_id}", "porch-light")
+            response = client.request(method, concrete, json={"on": True})
+            if response.status_code != HTTPStatus.UNAUTHORIZED:
+                unguarded.append(f"{method} {path} -> {response.status_code}")
+
+        assert not unguarded, f"reachable without a key: {unguarded}"
 
     def test_a_rejected_request_does_not_touch_the_hardware(
         self, client: TestClient, relay_service: RelayService

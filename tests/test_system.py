@@ -45,6 +45,8 @@ class TestRouting:
     def test_unknown_path_is_a_plain_404(self, client: TestClient) -> None:
         assert client.get("/does-not-exist").status_code == HTTPStatus.NOT_FOUND
 
-    def test_no_v1_routes_are_registered_yet(self, app_paths: set[str]) -> None:
-        """Guards the phase boundary: /v1 arrives with authentication, not before."""
-        assert not any(path.startswith("/v1") for path in app_paths)
+    def test_health_is_the_only_unversioned_route(
+        self, registered_routes: list[tuple[str, str]]
+    ) -> None:
+        unversioned = {path for _, path in registered_routes if not path.startswith("/v1")}
+        assert unversioned == {"/health"}

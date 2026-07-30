@@ -47,6 +47,32 @@ _STANDARD_RECORD_ATTRS: Final = frozenset(
 )
 
 
+def _caller_supplied_fields(record: logging.LogRecord) -> dict[str, Any]:
+    """Everything the caller attached via ``extra=``, in the order it was added."""
+    return {
+        key: value
+        for key, value in record.__dict__.items()
+        if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_")
+    }
+
+
+class TextFormatter(logging.Formatter):
+    """Readable lines that still carry ``extra=`` fields.
+
+    The stdlib formatter drops them: ``%(message)s`` renders only the message, so a
+    line logged with ``extra={"client": ...}`` silently loses the one detail worth
+    having. Since every diagnostic in this service — who failed authentication, which
+    relay was switched — travels in ``extra``, they are appended as ``key=value``.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        line = super().format(record)
+        fields = _caller_supplied_fields(record)
+        if fields:
+            line += " " + " ".join(f"{key}={value!r}" for key, value in fields.items())
+        return line
+
+
 class JsonFormatter(logging.Formatter):
     """Render each record as a single-line JSON object."""
 
@@ -58,9 +84,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        for key, value in record.__dict__.items():
-            if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_"):
-                payload[key] = value
+        payload.update(_caller_supplied_fields(record))
 
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
@@ -75,7 +99,7 @@ def configure_logging(level: LogLevel, *, json_output: bool = False) -> None:
     to, so repeated calls cannot produce duplicated log lines.
     """
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter() if json_output else logging.Formatter(_LINE_FORMAT))
+    handler.setFormatter(JsonFormatter() if json_output else TextFormatter(_LINE_FORMAT))
 
     root = logging.getLogger()
     for existing in root.handlers[:]:

@@ -57,7 +57,10 @@ def _expected_key(settings: Settings, scope: Scope) -> str:
 def _authenticate(request: Request, scope: Scope, presented: str | None) -> None:
     settings: Settings = request.app.state.settings
     limiter: FailureLimiter = request.app.state.auth_limiter
-    client = client_key(request)
+    # Bucketed per scope as well as per peer. Sharing one bucket would let a caller
+    # holding either key clear the other's failure count on every success, so a
+    # leaked sensor key would double as a rate-limit eraser for the relay key.
+    client = f"{scope.value}:{client_key(request)}"
 
     if limiter.is_blocked(client):
         logger.warning(
@@ -92,6 +95,16 @@ def _authenticate(request: Request, scope: Scope, presented: str | None) -> None
         )
 
     limiter.reset(client)
+
+
+def authenticate_or_none(request: Request) -> None:
+    """Re-run the relay check outside the dependency system.
+
+    Needed because FastAPI parses the request body before solving dependencies, so a
+    malformed body bypasses the dependency entirely. Raises the same
+    :class:`HTTPException` the dependency would, or returns if the key is good.
+    """
+    _authenticate(request, Scope.RELAY, request.headers.get(API_KEY_HEADER))
 
 
 def require_relay_key(

@@ -89,6 +89,23 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def app_paths(app: FastAPI) -> set[str]:
-    """Every path the application has registered."""
-    return {route.path for route in app.routes if isinstance(route, APIRoute)}
+def registered_routes(app: FastAPI) -> list[tuple[str, str]]:
+    """Every ``(method, path)`` the application serves.
+
+    FastAPI does not flatten included routers into ``APIRoute`` objects on
+    ``app.routes`` — it stores one wrapper per ``include_router`` call. Filtering
+    ``app.routes`` for ``APIRoute`` therefore yields nothing, which would make any
+    test built on it pass vacuously. The assertion at the end is the guard: if a
+    future FastAPI reorganises this again, the fixture fails instead of quietly
+    reporting that the application has no routes.
+    """
+    found: list[tuple[str, str]] = []
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            found.extend((method, route.path) for method in route.methods or ())
+        elif hasattr(route, "effective_route_contexts"):
+            for context in route.effective_route_contexts():
+                found.extend((method, context.path) for method in context.methods or ())
+
+    assert found, "route enumeration found nothing — the fixture is out of date"
+    return found
