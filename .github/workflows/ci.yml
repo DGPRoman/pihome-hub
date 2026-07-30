@@ -44,8 +44,8 @@ jobs:
         run: mypy
 
       - name: Ensure no secrets are tracked
-        # The predecessor of this project committed credentials. Fail loudly rather
-        # than rely on .gitignore continuing to be correct.
+        # A committed credential cannot be un-published, so this is checked on every
+        # run rather than trusting .gitignore to stay correct.
         run: |
           if git ls-files --error-unmatch .env >/dev/null 2>&1; then
             echo "::error file=.env::.env is tracked by git — it must never be committed"
