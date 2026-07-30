@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from pihome_hub import __version__
 from pihome_hub.app import create_app
-from tests.conftest import build_settings
+from tests.conftest import build_relay_service, build_settings
 
 
 class TestHealth:
@@ -33,7 +33,7 @@ class TestDocumentationToggle:
         assert client.get("/docs").status_code == HTTPStatus.NOT_FOUND
 
     def test_schema_is_served_when_enabled(self) -> None:
-        app = create_app(build_settings(docs_enabled=True))
+        app = create_app(build_settings(docs_enabled=True), relay_service=build_relay_service())
         with TestClient(app) as client:
             schema = client.get("/openapi.json")
             assert schema.status_code == HTTPStatus.OK

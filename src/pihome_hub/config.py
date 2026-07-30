@@ -9,10 +9,13 @@ unrelated variables from the surrounding environment. Secrets are typed as
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Final, Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from pihome_hub.relays.factory import GpioBackendName
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -62,6 +65,18 @@ class Settings(BaseSettings):
     #: Serve the OpenAPI schema and Swagger UI. Off by default so a public
     #: deployment does not publish its own route map.
     docs_enabled: bool = False
+
+    # -- Hardware ------------------------------------------------------------
+    #: Which relay backend to drive. ``mock`` by default: touching real GPIO
+    #: pins is something an operator opts into, never a fallback.
+    gpio_backend: GpioBackendName = "mock"
+    relay_config_path: Path = Path("config/relays.yaml")
+
+    # -- Brute-force protection ----------------------------------------------
+    #: Failed authentication attempts one client may make inside the window
+    #: before further attempts are refused with 429.
+    auth_max_failures: Annotated[int, Field(ge=1)] = 10
+    auth_failure_window_seconds: Annotated[float, Field(gt=0)] = 300.0
 
     # -- Credentials ---------------------------------------------------------
     #: Authenticates clients that control relays. Required: the service is

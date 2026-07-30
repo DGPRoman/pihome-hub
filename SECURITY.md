@@ -21,6 +21,8 @@ project with no commercial support and no bug bounty.
 | Unauthenticated relay control | Every `/v1` route requires an API key; `/health` is the only unauthenticated endpoint and returns no build detail |
 | Credential theft from a sensor device | Sensor ingestion and relay control use separate keys, so a key recovered from firmware cannot switch relays |
 | Timing attacks on key comparison | Keys are compared with `secrets.compare_digest` |
+| Online key guessing | Failed attempts are counted per client address; the allowance is bounded per window and exhausting it returns `429`. Successful requests clear the count, and the tracking table is capped so it cannot be grown into a memory exhaustion |
+| Probing for which endpoint exists | A missing key and a wrong key return an identical `401` body, and no error echoes either the supplied or the expected key |
 | Example credentials reaching production | Startup validation rejects keys shorter than 32 characters and keys that still look like the shipped example |
 | Secrets in the repository | Credentials live only in `.env`, which is git-ignored; no key, address or coordinate is present in source |
 | Route map disclosure | OpenAPI and Swagger UI are off unless `PIHOME_DOCS_ENABLED=true` |

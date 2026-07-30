@@ -89,6 +89,40 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_LOG_JSON` | `false` | One JSON object per log record |
 | `PIHOME_ACCESS_LOG` | `false` | Log every HTTP request |
 | `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema |
+| `PIHOME_GPIO_BACKEND` | `mock` | `mock` or `gpiozero` — driving real pins is explicit |
+| `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
+| `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
+| `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
+
+Relay wiring lives in its own file, because it describes a house rather than a
+process. Copy [`config/relays.example.yaml`](config/relays.example.yaml) to
+`config/relays.yaml` — the real file is git-ignored.
+
+## API
+
+Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
+`PUT`; `toggle` is a `POST`, since replaying it does not produce the same result twice.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness. The only unauthenticated endpoint |
+| `GET` | `/v1/relays` | Every relay and its state |
+| `PUT` | `/v1/relays` | Set every relay to the same state — body `{"on": true}` |
+| `POST` | `/v1/relays/toggle` | Invert every relay independently |
+| `GET` | `/v1/relays/{id}` | Read one relay |
+| `PUT` | `/v1/relays/{id}` | Set one relay — body `{"on": false}` |
+| `POST` | `/v1/relays/{id}/toggle` | Invert one relay |
+
+```console
+$ curl -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
+{"relays":[{"id":"porch-light","label":"Porch light","on":false}]}
+
+$ curl -X POST -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays/porch-light/toggle
+{"id":"porch-light","label":"Porch light","on":true}
+```
+
+Bodies are validated strictly: `{"on": "yes"}` is a `422`, not a guess. An unknown
+relay id is a `404`, a bad or missing key is a `401`, and repeated failures earn a `429`.
 
 ## Project layout
 
@@ -118,8 +152,8 @@ tests/                 runs without hardware, against the mock backend
 | --- | --- | --- |
 | 1 | Project scaffold, configuration, logging, `/health`, CI | ✅ done |
 | 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
-| 3 | `/v1` REST API, API-key authentication | next |
-| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | |
+| 3 | `/v1` REST API, API-key authentication | ✅ done |
+| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | next |
 | 5 | systemd unit, install script, deployment hardening | |
 | 6 | Architecture, installation, migration and troubleshooting docs | |
 

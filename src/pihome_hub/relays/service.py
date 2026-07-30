@@ -8,6 +8,7 @@ Phase 3) and the backend (mock or real GPIO).
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterable, Mapping
 
 from pihome_hub.relays.backend import RelayBackend
@@ -24,6 +25,12 @@ class RelayService:
         self._backend = backend
         self._relays: dict[str, RelayConfig] = {}
         self._state: dict[str, bool] = {}
+        # Route handlers are sync `def`, so Starlette runs them in a threadpool.
+        # `toggle` is a read-modify-write over shared state: two concurrent toggles
+        # of one relay would both observe the old value and both write the same new
+        # one, silently collapsing two presses into one. Reentrant because the group
+        # operations hold the lock while calling the single-relay path.
+        self._lock = threading.RLock()
 
         seen_pins: dict[int, str] = {}
         for relay in relays:
@@ -60,8 +67,9 @@ class RelayService:
 
     def _set(self, relay_id: str, *, on: bool) -> bool:
         relay = self._require(relay_id)
-        self._backend.write(relay.pin, on=on)
-        self._state[relay.id] = on
+        with self._lock:
+            self._backend.write(relay.pin, on=on)
+            self._state[relay.id] = on
         return on
 
     def turn_on(self, relay_id: str) -> bool:
@@ -72,20 +80,39 @@ class RelayService:
 
     def toggle(self, relay_id: str) -> bool:
         relay = self._require(relay_id)
-        return self._set(relay.id, on=not self._state[relay.id])
+        with self._lock:
+            return self._set(relay.id, on=not self._state[relay.id])
 
     def status(self) -> Mapping[str, bool]:
-        return dict(self._state)
+        with self._lock:
+            return dict(self._state)
+
+    def state_of(self, relay_id: str) -> bool:
+        """Current logical state of one relay. Raises for an unknown id."""
+        relay = self._require(relay_id)
+        with self._lock:
+            return self._state[relay.id]
+
+    def config_for(self, relay_id: str) -> RelayConfig:
+        """Static configuration of one relay. Raises for an unknown id."""
+        return self._require(relay_id)
+
+    @property
+    def configured(self) -> Mapping[str, RelayConfig]:
+        """Every configured relay, in declaration order."""
+        return dict(self._relays)
 
     def turn_on_all(self) -> Mapping[str, bool]:
-        for relay_id in self._relays:
-            self._set(relay_id, on=True)
-        return self.status()
+        with self._lock:
+            for relay_id in self._relays:
+                self._set(relay_id, on=True)
+            return self.status()
 
     def turn_off_all(self) -> Mapping[str, bool]:
-        for relay_id in self._relays:
-            self._set(relay_id, on=False)
-        return self.status()
+        with self._lock:
+            for relay_id in self._relays:
+                self._set(relay_id, on=False)
+            return self.status()
 
     def toggle_all(self) -> Mapping[str, bool]:
         """Invert every relay independently, based on its own current state.
@@ -96,10 +123,20 @@ class RelayService:
         overridden by an unrelated pin's level. Toggling each relay against its own
         state cannot desync relays that agreed, nor worsen a disagreement.
         """
-        for relay_id in self._relays:
-            self._set(relay_id, on=not self._state[relay_id])
-        return self.status()
+        with self._lock:
+            for relay_id in self._relays:
+                self._set(relay_id, on=not self._state[relay_id])
+            return self.status()
 
     def close(self) -> None:
-        for relay in self._relays.values():
-            self._backend.close(relay.pin)
+        """Release every pin.
+
+        Each pin is released independently: one backend that fails to close must not
+        strand the others, so shutdown leaves nothing claimed.
+        """
+        with self._lock:
+            for relay in self._relays.values():
+                try:
+                    self._backend.close(relay.pin)
+                except Exception:
+                    logger.exception("failed to release relay pin", extra={"pin": relay.pin})

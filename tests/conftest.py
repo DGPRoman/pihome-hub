@@ -19,9 +19,15 @@ from fastapi.testclient import TestClient
 
 from pihome_hub.app import create_app
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.relays import MockRelayBackend, RelayConfig, RelayService
 
 #: Long enough to pass validation, and obviously synthetic.
 VALID_KEY = "7f3a91c4e8b2d65097143bce8a2f5d0b6c47e19238af5d6c"
+#: The sensor key, distinct from the relay key so scope confusion is detectable.
+VALID_SENSOR_KEY = VALID_KEY[::-1]
+
+RELAY_HEADERS = {"X-API-Key": VALID_KEY}
+SENSOR_HEADERS = {"X-API-Key": VALID_SENSOR_KEY}
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +45,7 @@ def build_settings(**overrides: Any) -> Settings:
     """Construct settings from defaults plus explicit overrides."""
     values: dict[str, Any] = {
         "relay_api_key": VALID_KEY,
-        "sensor_api_key": VALID_KEY[::-1],
+        "sensor_api_key": VALID_SENSOR_KEY,
     }
     values.update(overrides)
     return Settings(**values)
@@ -50,9 +56,30 @@ def settings() -> Settings:
     return build_settings()
 
 
+def build_relay_service(backend: MockRelayBackend | None = None) -> RelayService:
+    """A two-relay service on a mock backend, matching config/relays.example.yaml."""
+    return RelayService(
+        backend if backend is not None else MockRelayBackend(),
+        [
+            RelayConfig(id="porch-light", pin=17, label="Porch light"),
+            RelayConfig(id="gate-light", pin=27, label="Gate light"),
+        ],
+    )
+
+
 @pytest.fixture
-def app(settings: Settings) -> FastAPI:
-    return create_app(settings)
+def relay_backend() -> MockRelayBackend:
+    return MockRelayBackend()
+
+
+@pytest.fixture
+def relay_service(relay_backend: MockRelayBackend) -> RelayService:
+    return build_relay_service(relay_backend)
+
+
+@pytest.fixture
+def app(settings: Settings, relay_service: RelayService) -> FastAPI:
+    return create_app(settings, relay_service=relay_service)
 
 
 @pytest.fixture

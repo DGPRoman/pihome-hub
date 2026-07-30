@@ -20,8 +20,9 @@ from typing import Final
 import uvicorn
 from pydantic import ValidationError
 
-from pihome_hub.app import create_app
+from pihome_hub.app import build_relay_service, create_app
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.relays import RelayConfigError
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -62,8 +63,16 @@ def main() -> None:
         sys.stderr.write(render_configuration_error(exc) + "\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
+    # Built before the server starts so a bad relay config is reported plainly
+    # rather than as a traceback from inside a running event loop.
+    try:
+        relay_service = build_relay_service(settings)
+    except RelayConfigError as exc:
+        sys.stderr.write(f"pihome-hub: {exc}\n")
+        raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
+
     uvicorn.run(
-        create_app(settings),
+        create_app(settings, relay_service=relay_service),
         host=settings.host,
         port=settings.port,
         server_header=False,
