@@ -1,0 +1,114 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pihome-hub"
+version = "0.1.0"
+description = "Self-hosted HTTP control plane for Raspberry Pi relays, sensors and home automation rules"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Roman Pelenychko" }]
+keywords = ["raspberry-pi", "gpio", "relay", "home-automation", "fastapi", "smart-home"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: No Input/Output (Daemon)",
+  "Framework :: FastAPI",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation",
+]
+
+# Exact pins, not ranges: this is a deployed application, not a library, and the
+# target device is a Raspberry Pi that is provisioned once and then left running
+# for months. Reproducible installs matter more than dependency flexibility.
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "PyYAML==6.0.3",
+  "uvicorn==0.52.0",
+]
+
+[project.optional-dependencies]
+# Hardware access. Kept out of the base install so the service can run — and be
+# developed and tested — on any machine using the mock backend.
+rpi = [
+  "gpiozero==2.0.1.post3",
+  "lgpio==0.2.2.0",
+]
+dev = [
+  # Starlette's TestClient requires httpx2; the original httpx is deprecated for
+  # this use and emits a warning that the suite treats as an error.
+  "httpx2==2.9.1",
+  "mypy==2.3.0",
+  "pytest==9.1.1",
+  "ruff==0.16.0",
+]
+
+[project.scripts]
+pihome-hub = "pihome_hub.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/DGPRoman/pihome-hub"
+Issues = "https://github.com/DGPRoman/pihome-hub/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pihome_hub"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "A",     # flake8-builtins
+  "ANN",   # flake8-annotations
+  "ASYNC", # flake8-async
+  "B",     # flake8-bugbear
+  "C4",    # flake8-comprehensions
+  "E",     # pycodestyle errors
+  "F",     # pyflakes
+  "I",     # isort
+  "N",     # pep8-naming
+  "PL",    # pylint
+  "PT",    # flake8-pytest-style
+  "RET",   # flake8-return
+  "RUF",   # ruff-specific
+  "S",     # flake8-bandit
+  "SIM",   # flake8-simplify
+  "T20",   # flake8-print
+  "TID",   # flake8-tidy-imports
+  "UP",    # pyupgrade
+  "W",     # pycodestyle warnings
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Assertions are the point of a test suite, and its fixtures necessarily contain
+# literal (synthetic) credentials.
+"tests/**" = ["S101", "S105", "S106", "S107"]
+# A settings-override helper forwards arbitrary keyword values by design.
+"tests/conftest.py" = ["ANN401", "S101", "S105", "S106", "S107"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+filterwarnings = ["error"]

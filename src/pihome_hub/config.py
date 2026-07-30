@@ -1,0 +1,108 @@
+"""Application settings, resolved from environment variables and an optional ``.env`` file.
+
+Every setting is prefixed with ``PIHOME_`` so the service cannot accidentally pick up
+unrelated variables from the surrounding environment. Secrets are typed as
+:class:`~pydantic.SecretStr`, which keeps them out of log lines, tracebacks and
+``repr()`` output.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Annotated, Final, Literal
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+#: Shortest API key we are willing to accept. A key this long resists online
+#: brute force even when the service is reachable over an untrusted network.
+MIN_API_KEY_LENGTH: Final = 32
+
+#: Values that look like a key but are really a copy-paste artefact from example
+#: config. Rejecting them at startup turns a silent security hole into a crash.
+_REJECTED_KEY_MARKERS: Final = (
+    "changeme",
+    "change_me",
+    "change-me",
+    "example",
+    "placeholder",
+    "replaceme",
+    "yourkeyhere",
+)
+
+
+class Settings(BaseSettings):
+    """Runtime configuration for the service."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="PIHOME_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
+    # -- HTTP server ---------------------------------------------------------
+    #: Loopback by default. Binding to every interface is an explicit operator
+    #: decision, not something that happens because a default was left alone.
+    host: str = "127.0.0.1"
+    port: Annotated[int, Field(ge=1, le=65535)] = 5002
+
+    # -- Observability -------------------------------------------------------
+    log_level: LogLevel = "INFO"
+    #: Emit one JSON object per log record instead of human-readable lines.
+    log_json: bool = False
+    #: Log a line per HTTP request. Off by default; on a permanently exposed host
+    #: this is mostly scanner noise and it costs SD-card write cycles.
+    access_log: bool = False
+
+    # -- API surface ---------------------------------------------------------
+    #: Serve the OpenAPI schema and Swagger UI. Off by default so a public
+    #: deployment does not publish its own route map.
+    docs_enabled: bool = False
+
+    # -- Credentials ---------------------------------------------------------
+    #: Authenticates clients that control relays. Required: the service is
+    #: unusable without it, so failing at startup beats failing at request time.
+    relay_api_key: SecretStr
+    #: Authenticates sensor devices that push readings. Deliberately separate
+    #: from ``relay_api_key`` so firmware flashed onto a sensor cannot also
+    #: drive relays directly if that firmware is ever extracted.
+    sensor_api_key: SecretStr
+
+    @field_validator("relay_api_key", "sensor_api_key")
+    @classmethod
+    def _reject_weak_keys(cls, value: SecretStr) -> SecretStr:
+        secret = value.get_secret_value()
+
+        if len(secret) < MIN_API_KEY_LENGTH:
+            msg = f"API key must be at least {MIN_API_KEY_LENGTH} characters, got {len(secret)}"
+            raise ValueError(msg)
+
+        normalised = secret.casefold().replace(" ", "")
+        for marker in _REJECTED_KEY_MARKERS:
+            if marker in normalised:
+                msg = (
+                    f"API key looks like example config (contains {marker!r}). "
+                    "Generate a real one, e.g. `python -m secrets token_urlsafe 48`."
+                )
+                raise ValueError(msg)
+
+        return value
+
+    @field_validator("host")
+    @classmethod
+    def _require_host(cls, value: str) -> str:
+        host = value.strip()
+        if not host:
+            msg = "host must not be empty"
+            raise ValueError(msg)
+        return host
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the process-wide settings, reading the environment exactly once."""
+    return Settings()  # type: ignore[call-arg]  # values come from env / .env

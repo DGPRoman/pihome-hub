@@ -1,0 +1,38 @@
+# Secrets and machine-specific configuration.
+# Nothing matching these should ever reach a commit — see SECURITY.md.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local device and automation configuration. Only the *.example.yaml templates
+# are tracked; the real files describe a specific house and belong on that host.
+config/*.yaml
+config/*.yml
+!config/*.example.yaml
+!config/*.example.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
