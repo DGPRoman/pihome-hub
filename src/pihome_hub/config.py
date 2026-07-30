@@ -8,11 +8,12 @@ unrelated variables from the surrounding environment. Secrets are typed as
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from pihome_hub.relays.factory import GpioBackendName
@@ -116,6 +117,34 @@ class Settings(BaseSettings):
             msg = "host must not be empty"
             raise ValueError(msg)
         return host
+
+    @property
+    def binds_to_loopback(self) -> bool:
+        if self.host == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(self.host).is_loopback
+        except ValueError:
+            return False
+
+    @model_validator(mode="after")
+    def _docs_stay_on_loopback(self) -> Settings:
+        """Refuse to publish the API's own route map on a reachable interface.
+
+        Swagger UI and the OpenAPI schema carry no credential — FastAPI mounts them
+        without dependencies, and gating the schema would break the UI that has to
+        fetch it. Rather than serve an unauthenticated map of every route and its body
+        shape, enabling docs is only permitted while bound to loopback. Reach them from
+        elsewhere by forwarding a port over SSH or the VPN.
+        """
+        if self.docs_enabled and not self.binds_to_loopback:
+            msg = (
+                f"docs_enabled is true while bound to {self.host!r}, which would serve "
+                "/docs and /openapi.json to anyone who can reach that address. Bind to "
+                "127.0.0.1, or forward the port (ssh -L 5002:127.0.0.1:5002 pi) instead."
+            )
+            raise ValueError(msg)
+        return self
 
 
 @lru_cache(maxsize=1)

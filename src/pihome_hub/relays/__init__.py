@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from pihome_hub.relays.backend import RelayBackend
 from pihome_hub.relays.config import load_relays
-from pihome_hub.relays.errors import RelayConfigError, RelayError, UnknownRelayError
+from pihome_hub.relays.errors import (
+    RelayConfigError,
+    RelayError,
+    RelayHardwareError,
+    UnknownRelayError,
+)
 from pihome_hub.relays.mock import MockRelayBackend
 from pihome_hub.relays.models import RelayConfig
 from pihome_hub.relays.service import RelayService
@@ -20,6 +25,7 @@ __all__ = [
     "RelayConfig",
     "RelayConfigError",
     "RelayError",
+    "RelayHardwareError",
     "RelayService",
     "UnknownRelayError",
     "load_relays",

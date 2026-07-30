@@ -7,10 +7,28 @@
 # a LOW signal closes the relay. If your board switches on HIGH, set it false.
 #
 # initial_state controls what happens to a relay the moment this service starts:
-#   preserve — read the pin's current level and keep it (the default: a restart
-#              should not be a reason for the lights to change)
-#   on / off — force a known state, useful if you don't trust the pin's boot-time
-#              level, or you simply want a relay off whenever the service starts
+#   preserve — read the pin's current level and keep it, so a restart is not a
+#              reason for the lights to change
+#   on / off — force a known state
+#
+# shutdown_state controls what is driven as the service stops:
+#   leave    — release the pin without driving it (the default)
+#   on / off — drive to a known state first
+#
+# One caveat worth understanding before relying on either. While this service is
+# not running it does not own the pins: releasing a GPIO pin turns it back into an
+# input with no pull, so the relay follows whatever the board's own idle level is.
+# That means:
+#
+#   * `shutdown_state` governs the brief window before the pin is released — which
+#     is what a fast `systemctl restart` sees — not the state while the service is
+#     stopped. Nothing in software can hold a pin after the process exits.
+#   * `preserve` is therefore only as trustworthy as the board's idle pull. If you
+#     have not measured what your board does with a floating IN, prefer an explicit
+#     `on` or `off` here so startup is deterministic.
+#
+# Most cheap opto-isolated boards pull IN high, which with active_low: true means
+# the relay is released — lights off — whenever the service is not running.
 
 relays:
   - id: porch-light
@@ -18,9 +36,11 @@ relays:
     label: "Porch light"
     active_low: true
     initial_state: preserve
+    shutdown_state: leave
 
   - id: gate-light
     pin: 27
     label: "Gate light"
     active_low: true
     initial_state: preserve
+    shutdown_state: leave

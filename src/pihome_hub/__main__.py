@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from pihome_hub.app import build_relay_service, create_app
 from pihome_hub.config import Settings, get_settings
-from pihome_hub.relays import RelayConfigError
+from pihome_hub.relays import RelayError
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -40,8 +40,13 @@ def render_configuration_error(exc: ValidationError) -> str:
 
     for error in exc.errors():
         location = error["loc"]
-        field = str(location[0]) if location else "(unknown)"
-        lines.append(f"  {_environment_variable_for(field)}: {error['msg']}")
+        message = error["msg"].removeprefix("Value error, ")
+        if location:
+            lines.append(f"  {_environment_variable_for(str(location[0]))}: {message}")
+        else:
+            # A whole-model check rather than a single field, so there is no one
+            # variable to blame — print the explanation on its own.
+            lines.append(f"  {message}")
 
     lines += [
         "",
@@ -63,11 +68,14 @@ def main() -> None:
         sys.stderr.write(render_configuration_error(exc) + "\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
-    # Built before the server starts so a bad relay config is reported plainly
-    # rather than as a traceback from inside a running event loop.
+    # Built before the server starts so a bad relay config — or a pin this host will
+    # not give us — is reported plainly rather than as a traceback from inside a
+    # running event loop. RelayError covers both the configuration and hardware cases;
+    # catching only the former let gpiozero's own exceptions escape as a raw traceback
+    # with the wrong exit code, which a Restart=always unit turns into a crash loop.
     try:
         relay_service = build_relay_service(settings)
-    except RelayConfigError as exc:
+    except RelayError as exc:
         sys.stderr.write(f"pihome-hub: {exc}\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 

@@ -29,9 +29,17 @@ mock, so nothing about developing this requires a Raspberry Pi.
 the inversion is easy to get subtly wrong. Each relay declares its own `active_low`, and
 the raw pin level never escapes the backend — the API speaks only in logical states.
 
-**Restarts do not disturb the house.** Each relay declares what should happen to it when
-the process starts: preserve the current state, or force a known one. A service restart
-is not a reason for the lights to go out.
+**Startup and shutdown behaviour is declared, not emergent.** Each relay says what should
+happen to it when the process starts (`initial_state`) and as it stops (`shutdown_state`).
+A service restart is not, by itself, a reason for the lights to go out.
+
+With one honest caveat, documented rather than glossed over: while the service is not
+running it does not own the pins. Releasing a GPIO pin returns it to an input with no
+pull, so a stopped service leaves each relay following its board's idle level. That is a
+property of the hardware, not something software can override — so `shutdown_state`
+governs the window before release, and `preserve` is only as trustworthy as the board's
+idle pull. [`config/relays.example.yaml`](config/relays.example.yaml) explains what to
+set if you have not measured yours.
 
 **Secure by default.** Loopback bind address, no OpenAPI schema, no `Server` header, two
 independent API keys, and startup validation that rejects a key still carrying the
@@ -88,7 +96,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_LOG_LEVEL` | `INFO` | Root log level |
 | `PIHOME_LOG_JSON` | `false` | One JSON object per log record |
 | `PIHOME_ACCESS_LOG` | `false` | Log every HTTP request |
-| `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema |
+| `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema. Refused unless bound to loopback |
 | `PIHOME_GPIO_BACKEND` | `mock` | `mock` or `gpiozero` — driving real pins is explicit |
 | `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |

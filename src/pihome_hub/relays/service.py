@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterable, Mapping
 
 from pihome_hub.relays.backend import RelayBackend
-from pihome_hub.relays.errors import RelayConfigError, UnknownRelayError
+from pihome_hub.relays.errors import RelayConfigError, RelayHardwareError, UnknownRelayError
 from pihome_hub.relays.models import RelayConfig
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,16 @@ class RelayService:
             self._relays[relay.id] = relay
 
         for relay in self._relays.values():
-            initial = self._resolve_initial_state(relay)
-            self._backend.setup_output(relay.pin, active_low=relay.active_low, initial=initial)
+            # Any failure here is a hardware or permissions problem, and the backend
+            # raises its own exception types. Translate at this boundary so startup
+            # can report something actionable instead of a foreign traceback.
+            try:
+                initial = self._resolve_initial_state(relay)
+                self._backend.setup_output(relay.pin, active_low=relay.active_low, initial=initial)
+            except Exception as exc:
+                self.close()
+                raise RelayHardwareError(relay.id, relay.pin, exc) from exc
+
             self._state[relay.id] = initial
             logger.info(
                 "relay ready",
@@ -129,14 +137,35 @@ class RelayService:
             return self.status()
 
     def close(self) -> None:
-        """Release every pin.
+        """Drive each relay to its configured shutdown state, then release its pin.
 
-        Each pin is released independently: one backend that fails to close must not
-        strand the others, so shutdown leaves nothing claimed.
+        Each relay is handled independently: one backend that fails must not strand
+        the others, so shutdown leaves nothing claimed.
+
+        Releasing a pin returns it to an input with no pull, so the relay ends up
+        following the board's idle level once this process is gone — driving a state
+        here governs the window before that, not the state afterwards.
         """
         with self._lock:
             for relay in self._relays.values():
+                if relay.id not in self._state:
+                    # Never successfully claimed — nothing to drive or release. This
+                    # happens when a failure part-way through startup unwinds.
+                    continue
+                if relay.shutdown_state != "leave":
+                    desired = relay.shutdown_state == "on"
+                    try:
+                        self._backend.write(relay.pin, on=desired)
+                        self._state[relay.id] = desired
+                    except Exception:
+                        logger.exception(
+                            "failed to drive relay to its shutdown state",
+                            extra={"relay_id": relay.id, "pin": relay.pin},
+                        )
                 try:
                     self._backend.close(relay.pin)
                 except Exception:
-                    logger.exception("failed to release relay pin", extra={"pin": relay.pin})
+                    logger.exception(
+                        "failed to release relay pin",
+                        extra={"relay_id": relay.id, "pin": relay.pin},
+                    )

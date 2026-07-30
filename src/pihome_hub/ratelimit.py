@@ -78,7 +78,19 @@ class FailureLimiter:
             self._failures.move_to_end(client)
 
             while len(self._failures) > self._max_clients:
-                self._failures.popitem(last=False)
+                self._evict_one()
+
+    def _evict_one(self) -> None:
+        """Drop the least incriminating tracked client. Caller holds ``self._lock``.
+
+        Plain LRU eviction would double as a block eraser: an attacker churning
+        through source addresses could push their own blocked entry out of the table
+        and get a fresh allowance. Evicting the fewest-failures entry first — oldest
+        breaking the tie — means a blocked client is the last thing to be forgotten.
+        """
+        rank = {client: position for position, client in enumerate(self._failures)}
+        victim = min(self._failures, key=lambda client: (len(self._failures[client]), rank[client]))
+        del self._failures[victim]
 
     def reset(self, client: str) -> None:
         """Forget a client's failures — called after it authenticates successfully."""

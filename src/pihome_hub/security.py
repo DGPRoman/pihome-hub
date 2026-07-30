@@ -7,6 +7,7 @@ cannot be replayed to switch relays.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import secrets
 from enum import StrEnum
@@ -36,16 +37,40 @@ class Scope(StrEnum):
     SENSOR = "sensor"
 
 
+def normalise_client(host: str) -> str:
+    """Reduce a peer address to the unit an attacker cannot cheaply multiply.
+
+    A single IPv6 address is worthless as an identity: a routed ``/64`` holds about
+    1.8e19 of them at no cost, so counting per address would hand out a fresh
+    allowance for every guess. Allocations are therefore collapsed to their ``/64``.
+
+    IPv4 stays per address, deliberately: addresses are scarce and heavily shared
+    behind NAT, so widening to a prefix would punish unrelated households.
+    """
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        # Not an IP at all — a hostname, or a label for a Unix socket peer.
+        return host
+
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
 def client_key(request: Request) -> str:
     """Identify the peer for rate-limiting purposes.
 
-    This is the address of whatever opened the TCP connection. No
-    ``X-Forwarded-For`` handling: trusting that header without knowing which proxy
-    is in front would let any caller forge its own identity and sidestep the
-    limiter. If this service is ever put behind a reverse proxy, the limiting
-    belongs in the proxy.
+    Derived from the address that opened the connection. No ``X-Forwarded-For``
+    handling: trusting that header without knowing which proxy sits in front would let
+    any caller forge its own identity and sidestep the limiter entirely. Behind a
+    reverse proxy, rate limiting belongs in the proxy — see SECURITY.md.
     """
-    return request.client.host if request.client else _UNKNOWN_CLIENT
+    if request.client is None:
+        return _UNKNOWN_CLIENT
+    return normalise_client(request.client.host)
 
 
 def _expected_key(settings: Settings, scope: Scope) -> str:
