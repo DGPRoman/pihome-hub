@@ -28,9 +28,9 @@ machine with no GPIO pins.
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Own the startup and shutdown of hardware-backed resources.
 
-    Phase 1 has no hardware to acquire yet. The hook exists so that when the relay
-    backend lands it has one obvious place to be initialised and, more importantly,
-    released — the previous implementation of this service leaked GPIO state on exit.
+    Wiring the relay service in here is Phase 3's job. The hook exists now so that
+    hardware has exactly one place to be acquired and — the part that is easy to
+    forget — released, rather than being left claimed when the process exits.
     """
     settings: Settings = app.state.settings
     logger.info(

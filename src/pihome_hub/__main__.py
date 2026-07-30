@@ -2,9 +2,9 @@
 
 Notable differences from a bare ``uvicorn`` command line:
 
-* No autoreload. The predecessor of this service ran ``uvicorn --reload`` in
-  production, which meant any file touch restarted the process and dropped every
-  relay to its power-on state.
+* No autoreload. Under ``--reload`` any file touch restarts the process, which on
+  this service means every relay drops to its power-on state — a development
+  convenience with no place near mains wiring.
 * ``server_header=False``, so the service does not announce its stack to anyone
   who connects.
 * Host, port and log settings come from validated configuration rather than from

@@ -98,9 +98,17 @@ src/pihome_hub/
 ├── app.py             ASGI application factory
 ├── config.py          settings and validation
 ├── logging.py         stdout logging, text or JSON
-└── api/
-    ├── system.py      /health — unversioned, unauthenticated
-    └── v1/            relay and sensor routes (authenticated)
+├── api/
+│   ├── system.py      /health — unversioned, unauthenticated
+│   └── v1/            relay and sensor routes (authenticated)
+└── relays/
+    ├── backend.py     RelayBackend protocol — the hardware seam
+    ├── mock.py        in-memory backend for development, tests and CI
+    ├── gpio.py        real backend via gpiozero (needs the 'rpi' extra)
+    ├── models.py      RelayConfig: pin, polarity, startup behaviour
+    ├── config.py      loads config/relays.yaml
+    └── service.py     logical on/off/toggle over configured relays
+config/                relays.example.yaml — copy and edit; the real file is ignored
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -109,19 +117,11 @@ tests/                 runs without hardware, against the mock backend
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Project scaffold, configuration, logging, `/health`, CI | ✅ done |
-| 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | next |
-| 3 | `/v1` REST API, API-key authentication, legacy compatibility shim | |
+| 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
+| 3 | `/v1` REST API, API-key authentication | next |
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | |
 | 5 | systemd unit, install script, deployment hardening | |
 | 6 | Architecture, installation, migration and troubleshooting docs | |
-
-## Relationship to the previous version
-
-This replaces an earlier private project of mine that grew organically and accumulated
-the usual problems: credentials in source, no tests, business logic entangled with pin
-access, and relay polarity handled inconsistently in five places. Rather than refactor it
-in place, I rewrote it — the API is versioned this time, and a compatibility shim keeps
-the existing Android client working while it is migrated.
 
 ## License
 

@@ -1,0 +1,26 @@
+# Copy to config/relays.yaml and edit for this house — that file is git-ignored,
+# this template is not.
+#
+#   cp config/relays.example.yaml config/relays.yaml
+#
+# active_low: true is correct for the common cheap opto-isolated relay boards:
+# a LOW signal closes the relay. If your board switches on HIGH, set it false.
+#
+# initial_state controls what happens to a relay the moment this service starts:
+#   preserve — read the pin's current level and keep it (the default: a restart
+#              should not be a reason for the lights to change)
+#   on / off — force a known state, useful if you don't trust the pin's boot-time
+#              level, or you simply want a relay off whenever the service starts
+
+relays:
+  - id: porch-light
+    pin: 17
+    label: "Porch light"
+    active_low: true
+    initial_state: preserve
+
+  - id: gate-light
+    pin: 27
+    label: "Gate light"
+    active_low: true
+    initial_state: preserve
