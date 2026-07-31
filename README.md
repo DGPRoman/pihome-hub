@@ -29,9 +29,17 @@ mock, so nothing about developing this requires a Raspberry Pi.
 the inversion is easy to get subtly wrong. Each relay declares its own `active_low`, and
 the raw pin level never escapes the backend — the API speaks only in logical states.
 
-**Restarts do not disturb the house.** Each relay declares what should happen to it when
-the process starts: preserve the current state, or force a known one. A service restart
-is not a reason for the lights to go out.
+**Startup and shutdown behaviour is declared, not emergent.** Each relay says what should
+happen to it when the process starts (`initial_state`) and as it stops (`shutdown_state`).
+A service restart is not, by itself, a reason for the lights to go out.
+
+With one honest caveat, documented rather than glossed over: while the service is not
+running it does not own the pins. Releasing a GPIO pin returns it to an input with no
+pull, so a stopped service leaves each relay following its board's idle level. That is a
+property of the hardware, not something software can override — so `shutdown_state`
+governs the window before release, and `preserve` is only as trustworthy as the board's
+idle pull. [`config/relays.example.yaml`](config/relays.example.yaml) explains what to
+set if you have not measured yours.
 
 **Secure by default.** Loopback bind address, no OpenAPI schema, no `Server` header, two
 independent API keys, and startup validation that rejects a key still carrying the
@@ -88,7 +96,41 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_LOG_LEVEL` | `INFO` | Root log level |
 | `PIHOME_LOG_JSON` | `false` | One JSON object per log record |
 | `PIHOME_ACCESS_LOG` | `false` | Log every HTTP request |
-| `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema |
+| `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema. Refused unless bound to loopback |
+| `PIHOME_GPIO_BACKEND` | `mock` | `mock` or `gpiozero` — driving real pins is explicit |
+| `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
+| `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
+| `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
+
+Relay wiring lives in its own file, because it describes a house rather than a
+process. Copy [`config/relays.example.yaml`](config/relays.example.yaml) to
+`config/relays.yaml` — the real file is git-ignored.
+
+## API
+
+Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
+`PUT`; `toggle` is a `POST`, since replaying it does not produce the same result twice.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness. The only unauthenticated endpoint |
+| `GET` | `/v1/relays` | Every relay and its state |
+| `PUT` | `/v1/relays` | Set every relay to the same state — body `{"on": true}` |
+| `POST` | `/v1/relays/toggle` | Invert every relay independently |
+| `GET` | `/v1/relays/{id}` | Read one relay |
+| `PUT` | `/v1/relays/{id}` | Set one relay — body `{"on": false}` |
+| `POST` | `/v1/relays/{id}/toggle` | Invert one relay |
+
+```console
+$ curl -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
+{"relays":[{"id":"porch-light","label":"Porch light","on":false}]}
+
+$ curl -X POST -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays/porch-light/toggle
+{"id":"porch-light","label":"Porch light","on":true}
+```
+
+Bodies are validated strictly: `{"on": "yes"}` is a `422`, not a guess. An unknown
+relay id is a `404`, a bad or missing key is a `401`, and repeated failures earn a `429`.
 
 ## Project layout
 
@@ -118,8 +160,8 @@ tests/                 runs without hardware, against the mock backend
 | --- | --- | --- |
 | 1 | Project scaffold, configuration, logging, `/health`, CI | ✅ done |
 | 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
-| 3 | `/v1` REST API, API-key authentication | next |
-| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | |
+| 3 | `/v1` REST API, API-key authentication | ✅ done |
+| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | next |
 | 5 | systemd unit, install script, deployment hardening | |
 | 6 | Architecture, installation, migration and troubleshooting docs | |
 

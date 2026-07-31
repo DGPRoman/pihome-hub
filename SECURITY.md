@@ -21,6 +21,9 @@ project with no commercial support and no bug bounty.
 | Unauthenticated relay control | Every `/v1` route requires an API key; `/health` is the only unauthenticated endpoint and returns no build detail |
 | Credential theft from a sensor device | Sensor ingestion and relay control use separate keys, so a key recovered from firmware cannot switch relays |
 | Timing attacks on key comparison | Keys are compared with `secrets.compare_digest` |
+| Online key guessing | Failed attempts are counted per client and per scope over a sliding window; exhausting the allowance returns `429`. See the limits of this below |
+| Route map disclosure through the docs | `/docs` and `/openapi.json` carry no credential, so enabling them is refused unless the service is bound to loopback |
+| Probing for which endpoint exists | A missing key and a wrong key return an identical `401` body, and no error echoes either the supplied or the expected key |
 | Example credentials reaching production | Startup validation rejects keys shorter than 32 characters and keys that still look like the shipped example |
 | Secrets in the repository | Credentials live only in `.env`, which is git-ignored; no key, address or coordinate is present in source |
 | Route map disclosure | OpenAPI and Swagger UI are off unless `PIHOME_DOCS_ENABLED=true` |
@@ -32,6 +35,21 @@ project with no commercial support and no bug bounty.
 - **No transport encryption.** The service speaks plain HTTP. The API key travels in a
   header, so anyone able to observe the connection can replay it. Do not expose it
   directly to the internet.
+- **Rate limiting slows guessing; it does not stop a determined attacker.** The counter
+  is keyed on the peer address — collapsed to the `/64` for IPv6, since a routed
+  allocation holds about 1.8×10¹⁹ addresses that would each otherwise earn a fresh
+  allowance. An attacker with many unrelated networks still gets one allowance per
+  network. The table of tracked clients is capped to bound memory, and eviction drops
+  the fewest-failures entry first so churn cannot push a blocked client out, but the cap
+  is still a cap. The real defence is a key with enough entropy to be unguessable and a
+  service that is not reachable from the internet — not this limiter.
+- **Key length is checked; key entropy is not.** A 32-character passphrase passes
+  validation and may carry far less entropy than 32 random characters. Generate keys
+  with `secrets.token_urlsafe`, as `.env.example` shows.
+- **No trusted-proxy support.** `X-Forwarded-For` is deliberately ignored, because
+  honouring it unconditionally would let any caller forge its own identity and bypass
+  the limiter. Behind a reverse proxy every request therefore looks like it comes from
+  the proxy, and rate limiting belongs in the proxy instead.
 - **No protection against a compromised client.** A key held by a phone or a sensor is
   a key an attacker who owns that device also holds.
 - **No multi-user model.** There are two roles, not user accounts, and no audit trail

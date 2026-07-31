@@ -20,8 +20,9 @@ from typing import Final
 import uvicorn
 from pydantic import ValidationError
 
-from pihome_hub.app import create_app
+from pihome_hub.app import build_relay_service, create_app
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.relays import RelayError
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -39,8 +40,13 @@ def render_configuration_error(exc: ValidationError) -> str:
 
     for error in exc.errors():
         location = error["loc"]
-        field = str(location[0]) if location else "(unknown)"
-        lines.append(f"  {_environment_variable_for(field)}: {error['msg']}")
+        message = error["msg"].removeprefix("Value error, ")
+        if location:
+            lines.append(f"  {_environment_variable_for(str(location[0]))}: {message}")
+        else:
+            # A whole-model check rather than a single field, so there is no one
+            # variable to blame — print the explanation on its own.
+            lines.append(f"  {message}")
 
     lines += [
         "",
@@ -49,7 +55,7 @@ def render_configuration_error(exc: ValidationError) -> str:
         "  cp .env.example .env && chmod 600 .env",
         '  python -c "import secrets; print(secrets.token_urlsafe(48))"',
         "",
-        "See docs/configuration.md for the full list of settings.",
+        "Every setting is documented in .env.example and in README.md.",
     ]
     return "\n".join(lines)
 
@@ -62,15 +68,32 @@ def main() -> None:
         sys.stderr.write(render_configuration_error(exc) + "\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
-    uvicorn.run(
-        create_app(settings),
-        host=settings.host,
-        port=settings.port,
-        server_header=False,
-        access_log=settings.access_log,
-        # Logging is already configured by create_app(); leave it alone.
-        log_config=None,
-    )
+    # Built before the server starts so a bad relay config — or a pin this host will
+    # not give us — is reported plainly rather than as a traceback from inside a
+    # running event loop. RelayError covers both the configuration and hardware cases;
+    # catching only the former let gpiozero's own exceptions escape as a raw traceback
+    # with the wrong exit code, which a Restart=always unit turns into a crash loop.
+    try:
+        relay_service = build_relay_service(settings)
+    except RelayError as exc:
+        sys.stderr.write(f"pihome-hub: {exc}\n")
+        raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
+
+    # This function built the service, so this function releases it. The lifespan
+    # only closes a service it created itself, so that an app handed one does not
+    # pull GPIO pins out from under whoever still holds a reference.
+    try:
+        uvicorn.run(
+            create_app(settings, relay_service=relay_service),
+            host=settings.host,
+            port=settings.port,
+            server_header=False,
+            access_log=settings.access_log,
+            # Logging is already configured by create_app(); leave it alone.
+            log_config=None,
+        )
+    finally:
+        relay_service.close()
 
 
 if __name__ == "__main__":

@@ -19,9 +19,15 @@ from fastapi.testclient import TestClient
 
 from pihome_hub.app import create_app
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.relays import MockRelayBackend, RelayConfig, RelayService
 
 #: Long enough to pass validation, and obviously synthetic.
 VALID_KEY = "7f3a91c4e8b2d65097143bce8a2f5d0b6c47e19238af5d6c"
+#: The sensor key, distinct from the relay key so scope confusion is detectable.
+VALID_SENSOR_KEY = VALID_KEY[::-1]
+
+RELAY_HEADERS = {"X-API-Key": VALID_KEY}
+SENSOR_HEADERS = {"X-API-Key": VALID_SENSOR_KEY}
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +45,7 @@ def build_settings(**overrides: Any) -> Settings:
     """Construct settings from defaults plus explicit overrides."""
     values: dict[str, Any] = {
         "relay_api_key": VALID_KEY,
-        "sensor_api_key": VALID_KEY[::-1],
+        "sensor_api_key": VALID_SENSOR_KEY,
     }
     values.update(overrides)
     return Settings(**values)
@@ -50,9 +56,30 @@ def settings() -> Settings:
     return build_settings()
 
 
+def build_relay_service(backend: MockRelayBackend | None = None) -> RelayService:
+    """A two-relay service on a mock backend, matching config/relays.example.yaml."""
+    return RelayService(
+        backend if backend is not None else MockRelayBackend(),
+        [
+            RelayConfig(id="porch-light", pin=17, label="Porch light"),
+            RelayConfig(id="gate-light", pin=27, label="Gate light"),
+        ],
+    )
+
+
 @pytest.fixture
-def app(settings: Settings) -> FastAPI:
-    return create_app(settings)
+def relay_backend() -> MockRelayBackend:
+    return MockRelayBackend()
+
+
+@pytest.fixture
+def relay_service(relay_backend: MockRelayBackend) -> RelayService:
+    return build_relay_service(relay_backend)
+
+
+@pytest.fixture
+def app(settings: Settings, relay_service: RelayService) -> FastAPI:
+    return create_app(settings, relay_service=relay_service)
 
 
 @pytest.fixture
@@ -62,6 +89,23 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def app_paths(app: FastAPI) -> set[str]:
-    """Every path the application has registered."""
-    return {route.path for route in app.routes if isinstance(route, APIRoute)}
+def registered_routes(app: FastAPI) -> list[tuple[str, str]]:
+    """Every ``(method, path)`` the application serves.
+
+    FastAPI does not flatten included routers into ``APIRoute`` objects on
+    ``app.routes`` — it stores one wrapper per ``include_router`` call. Filtering
+    ``app.routes`` for ``APIRoute`` therefore yields nothing, which would make any
+    test built on it pass vacuously. The assertion at the end is the guard: if a
+    future FastAPI reorganises this again, the fixture fails instead of quietly
+    reporting that the application has no routes.
+    """
+    found: list[tuple[str, str]] = []
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            found.extend((method, route.path) for method in route.methods or ())
+        elif hasattr(route, "effective_route_contexts"):
+            for context in route.effective_route_contexts():
+                found.extend((method, context.path) for method in context.methods or ())
+
+    assert found, "route enumeration found nothing — the fixture is out of date"
+    return found

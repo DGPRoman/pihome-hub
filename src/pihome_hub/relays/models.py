@@ -15,6 +15,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: :class:`~pihome_hub.relays.gpio.GpioZeroRelayBackend`).
 InitialState = Literal["preserve", "on", "off"]
 
+#: What this service does to a relay's pin as it shuts down.
+#:
+#: An important caveat: releasing a GPIO pin turns it back into an input with no
+#: pull, so once this process exits the relay follows whatever the board's own idle
+#: pull dictates — this service cannot hold a pin after it stops running. What
+#: ``shutdown_state`` controls is the state driven *before* the pin is released,
+#: which is what a fast restart window sees.
+#:
+#: ``leave`` releases without driving anything, ``on``/``off`` drive first.
+ShutdownState = Literal["leave", "on", "off"]
+
 _ID_PATTERN: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 #: BCM numbering — the convention gpiozero, and the rest of the Pi ecosystem, use.
@@ -33,7 +44,11 @@ class RelayConfig(BaseModel):
     #: Most cheap opto-isolated relay boards close the relay on a LOW signal —
     #: hence the default. A board that switches on HIGH needs this set to false.
     active_low: bool = True
+    #: ``preserve`` is only as trustworthy as the board's idle pull, because a pin
+    #: this service does not currently own reads as a floating input. Set ``on`` or
+    #: ``off`` explicitly for a relay whose boot-time level you cannot vouch for.
     initial_state: InitialState = "preserve"
+    shutdown_state: ShutdownState = "leave"
 
     @field_validator("id")
     @classmethod
