@@ -28,6 +28,9 @@ classifiers = [
 # target device is a Raspberry Pi that is provisioned once and then left running
 # for months. Reproducible installs matter more than dependency flexibility.
 dependencies = [
+  # Sunrise/sunset for after-dark automation. Works with the standard library's
+  # zoneinfo, so no separate timezone dependency is needed.
+  "astral==3.2",
   "fastapi==0.141.1",
   "pydantic==2.13.4",
   "pydantic-settings==2.14.2",
@@ -93,9 +96,13 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Assertions are the point of a test suite, and its fixtures necessarily contain
 # literal (synthetic) credentials.
-"tests/**" = ["S101", "S105", "S106", "S107"]
+# Literal values are a test's specification, and helper factories legitimately take
+# one keyword per field they build.
+"tests/**" = ["S101", "S105", "S106", "S107", "PLR0913", "PLR2004"]
 # A settings-override helper forwards arbitrary keyword values by design.
 "tests/conftest.py" = ["ANN401", "S101", "S105", "S106", "S107"]
+# Parametrised over deliberately wrong types, which is what the test asserts about.
+"tests/sensors/test_models.py" = ["ANN401", "PLR2004", "S101"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

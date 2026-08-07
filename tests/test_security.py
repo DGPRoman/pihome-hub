@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from http import HTTPStatus
 
 import pytest
@@ -38,7 +39,11 @@ class TestKeyRequired:
 
         unguarded = []
         for method, path in versioned:
-            concrete = path.replace("{relay_id}", "porch-light")
+            # Substitute every placeholder, not just the ones that exist today. An
+            # unsubstituted "{device_id}" happens to match its own route as a literal
+            # segment, so a narrower substitution would still pass — by coincidence
+            # rather than by covering the route.
+            concrete = re.sub(r"\{[^}]+\}", "some-id", path)
             response = client.request(method, concrete, json={"on": True})
             if response.status_code != HTTPStatus.UNAUTHORIZED:
                 unguarded.append(f"{method} {path} -> {response.status_code}")

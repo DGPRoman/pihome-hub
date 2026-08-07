@@ -7,8 +7,10 @@ runs declarative automation rules — the sort that turns on outdoor lights when
 sensor fires, but only after dark. It runs on a Raspberry Pi Zero 2 W that stays powered
 around the clock, and it is deliberately small enough to read in one sitting.
 
-> **Status: early.** The scaffold, configuration and operational endpoints are in place.
-> Relay control, sensor ingestion and automation are landing next — see [Roadmap](#roadmap).
+> **Status: functional, not yet deployed.** Relay control, sensor ingestion and
+> automation all work and are covered by tests. Deployment tooling — the systemd unit
+> and install script — is next, so for now it runs from a checkout. See
+> [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -99,6 +101,8 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema. Refused unless bound to loopback |
 | `PIHOME_GPIO_BACKEND` | `mock` | `mock` or `gpiozero` — driving real pins is explicit |
 | `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
+| `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
+| `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
 | `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
 
@@ -120,6 +124,9 @@ Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
 | `GET` | `/v1/relays/{id}` | Read one relay |
 | `PUT` | `/v1/relays/{id}` | Set one relay — body `{"on": false}` |
 | `POST` | `/v1/relays/{id}/toggle` | Invert one relay |
+| `GET` | `/v1/sensors` | Every sensor, its latest reading, and whether it is stale |
+| `GET` | `/v1/sensors/{id}` | Read one sensor |
+| `POST` | `/v1/sensors/{id}/readings` | Push a reading — **sensor key**, not the relay key |
 
 ```console
 $ curl -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
@@ -131,6 +138,42 @@ $ curl -X POST -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays/porch-light/
 
 Bodies are validated strictly: `{"on": "yes"}` is a `422`, not a guess. An unknown
 relay id is a `404`, a bad or missing key is a `401`, and repeated failures earn a `429`.
+
+The two keys divide along a real boundary rather than a decorative one. Firmware pushes
+readings and can do nothing else — it cannot read the state of the house, and it cannot
+drive a relay directly. The phone reads and controls, and cannot forge a motion event to
+reach a relay through an automation rule.
+
+```console
+$ curl -X POST -H "X-API-Key: $SENSOR_KEY" -H 'Content-Type: application/json' \
+       -d '{"motion": true, "temperature": 21.5}' \
+       http://127.0.0.1:5002/v1/sensors/porch-motion/readings
+# 202, empty body — the sensor key does not grant reads
+
+$ curl -H "X-API-Key: $RELAY_KEY" http://127.0.0.1:5002/v1/sensors/porch-motion
+{"id":"porch-motion","label":"Porch motion","stale":false,"motion":true,...}
+```
+
+## Automation
+
+Rules live in [`config/automation.yaml`](config/automation.example.yaml) as data, not code:
+
+```yaml
+rules:
+  - id: porch-motion-light
+    when: {device: porch-motion, motion: true}
+    only_after_dark: true
+    then: {relay: porch-light, state: on, hold_seconds: 60}
+```
+
+Sunrise and sunset come from a `location` block, so the coordinates of a house stay in
+its own git-ignored config. Continued motion restarts the countdown rather than queueing
+another timer, so a light stays on while someone is still there. Holds are asyncio tasks
+that are cancelled on shutdown — nothing is left scheduled by a process that has exited.
+
+Every id a rule names is checked at startup: a rule pointing at a relay or device that
+does not exist stops the service with a message naming the rule, rather than failing
+silently the first time someone walks past the sensor.
 
 ## Project layout
 
@@ -161,8 +204,8 @@ tests/                 runs without hardware, against the mock backend
 | 1 | Project scaffold, configuration, logging, `/health`, CI | ✅ done |
 | 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
 | 3 | `/v1` REST API, API-key authentication | ✅ done |
-| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | next |
-| 5 | systemd unit, install script, deployment hardening | |
+| 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
+| 5 | systemd unit, install script, deployment hardening | next |
 | 6 | Architecture, installation, migration and troubleshooting docs | |
 
 ## License

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pihome_hub.sensors import DeviceSnapshot
+
 
 class RelayState(BaseModel):
     """A relay and whether its circuit is currently energised."""
@@ -38,3 +40,11 @@ class RelayCollection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     relays: list[RelayState]
+
+
+class SensorCollection(BaseModel):
+    """Every configured sensor device and its latest reading."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sensors: list[DeviceSnapshot]

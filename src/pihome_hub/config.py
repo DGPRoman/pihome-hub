@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     #: pins is something an operator opts into, never a fallback.
     gpio_backend: GpioBackendName = "mock"
     relay_config_path: Path = Path("config/relays.yaml")
+    #: Sensors and automation are optional: a missing file means the feature is
+    #: simply not in use, not that the deployment is broken.
+    sensor_config_path: Path = Path("config/sensors.yaml")
+    automation_config_path: Path = Path("config/automation.yaml")
 
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window

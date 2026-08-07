@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Final, Literal
+from typing import Annotated, Final, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+
+from pihome_hub.yamlish import switch_word
 
 #: What happens to a relay's pin the moment the process claims it.
 #:
@@ -13,7 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: should not be a reason for the lights to change. ``on``/``off`` force a known
 #: state, useful for a relay whose boot-time level cannot be trusted (see
 #: :class:`~pihome_hub.relays.gpio.GpioZeroRelayBackend`).
-InitialState = Literal["preserve", "on", "off"]
+#: ``BeforeValidator`` because YAML 1.1 turns a bare ``on`` into ``True`` — see
+#: :mod:`pihome_hub.yamlish`.
+InitialState: TypeAlias = Annotated[Literal["preserve", "on", "off"], BeforeValidator(switch_word)]
 
 #: What this service does to a relay's pin as it shuts down.
 #:
@@ -24,7 +28,7 @@ InitialState = Literal["preserve", "on", "off"]
 #: which is what a fast restart window sees.
 #:
 #: ``leave`` releases without driving anything, ``on``/``off`` drive first.
-ShutdownState = Literal["leave", "on", "off"]
+ShutdownState: TypeAlias = Annotated[Literal["leave", "on", "off"], BeforeValidator(switch_word)]
 
 _ID_PATTERN: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 

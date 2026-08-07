@@ -122,14 +122,49 @@ def _authenticate(request: Request, scope: Scope, presented: str | None) -> None
     limiter.reset(client)
 
 
-def authenticate_or_none(request: Request) -> None:
-    """Re-run the relay check outside the dependency system.
+def authenticate_any_scope(request: Request) -> None:
+    """Require *some* valid key, outside the dependency system.
 
     Needed because FastAPI parses the request body before solving dependencies, so a
-    malformed body bypasses the dependency entirely. Raises the same
-    :class:`HTTPException` the dependency would, or returns if the key is good.
+    malformed body never reaches the route's own dependency. The question here is
+    narrower than the route's: not "may you do this?" — the route will still decide
+    that — but "are you anonymous?", since answering 422 to an anonymous caller
+    reveals which paths exist and what they accept.
+
+    Either key therefore satisfies it, and the check cannot be used to widen a
+    scope. Failures are counted in their own bucket so that a device with buggy
+    firmware cannot exhaust the allowance protecting the relay key.
     """
-    _authenticate(request, Scope.RELAY, request.headers.get(API_KEY_HEADER))
+    settings: Settings = request.app.state.settings
+    limiter: FailureLimiter = request.app.state.auth_limiter
+    presented = (request.headers.get(API_KEY_HEADER) or "").encode("utf-8")
+
+    for scope in Scope:
+        expected = _expected_key(settings, scope).encode("utf-8")
+        if secrets.compare_digest(presented, expected):
+            return
+
+    bucket = f"probe:{client_key(request)}"
+    if limiter.is_blocked(bucket):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed authentication attempts",
+        )
+
+    limiter.record_failure(bucket)
+    logger.warning(
+        "unauthenticated request with an unparseable body",
+        extra={
+            "client": client_key(request),
+            "path": request.url.path,
+            "recent_failures": limiter.failure_count(bucket),
+        },
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=_UNAUTHORIZED_DETAIL,
+        headers={"WWW-Authenticate": API_KEY_HEADER},
+    )
 
 
 def require_relay_key(

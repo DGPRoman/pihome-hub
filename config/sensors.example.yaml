@@ -1,0 +1,23 @@
+# Copy to config/sensors.yaml and edit — that file is git-ignored, this one is not.
+#
+#   cp config/sensors.example.yaml config/sensors.yaml
+#
+# Devices are declared rather than discovered. A reading from an id that is not
+# listed here is rejected with 404, which means firmware with a typo fails loudly,
+# and nothing an attacker with the sensor key posts can grow this service's memory.
+#
+# stale_after_seconds decides when a device is reported as `stale: true`. Set it to
+# a comfortable multiple of the device's reporting interval — a sensor that reports
+# every 60s and is silent for 300s has almost certainly stopped, and it is better to
+# see that than to keep serving its last reading as though it were current.
+#
+# The file is optional. Omit it entirely for a deployment that only switches relays.
+
+devices:
+  - id: porch-motion
+    label: "Porch motion sensor"
+    stale_after_seconds: 300
+
+  - id: gate-camera
+    label: "Gate camera motion"
+    stale_after_seconds: 300
