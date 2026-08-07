@@ -15,12 +15,15 @@ from fastapi.responses import JSONResponse
 from pihome_hub import __version__
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.relays import router as relays_router
+from pihome_hub.api.v1.sensors import ingest_router, read_router
+from pihome_hub.automation import AutomationEngine, SunClock, load_automation
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.logging import configure_logging
 from pihome_hub.ratelimit import FailureLimiter
 from pihome_hub.relays import RelayService, UnknownRelayError, load_relays
 from pihome_hub.relays.factory import create_backend
-from pihome_hub.security import authenticate_or_none
+from pihome_hub.security import authenticate_any_scope
+from pihome_hub.sensors import SensorStore, UnknownDeviceError, load_sensors
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,20 @@ def build_relay_service(settings: Settings) -> RelayService:
     return RelayService(create_backend(settings.gpio_backend), relays)
 
 
+def build_sensor_store(settings: Settings) -> SensorStore:
+    """Assemble the sensor store described by ``settings``."""
+    return SensorStore(load_sensors(settings.sensor_config_path))
+
+
+def build_automation_engine(
+    settings: Settings, relays: RelayService, sensors: SensorStore
+) -> AutomationEngine:
+    """Assemble the automation engine, validating that its rules refer to real things."""
+    config = load_automation(settings.automation_config_path)
+    sun = SunClock(config.location) if config.location is not None else None
+    return AutomationEngine(relays, config.rules, sun=sun, sensors=sensors)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Acquire and release the relay service for the lifetime of the process.
@@ -60,26 +77,43 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.relays = build_relay_service(settings)
 
     service: RelayService = app.state.relays
+
+    if getattr(app.state, "sensors", None) is None:
+        app.state.sensors = build_sensor_store(settings)
+    sensors: SensorStore = app.state.sensors
+
+    # The engine holds asyncio tasks, so it is always built here — inside the running
+    # loop — rather than handed in from a synchronous caller.
+    if getattr(app.state, "automation", None) is None:
+        app.state.automation = build_automation_engine(settings, service, sensors)
+    engine: AutomationEngine = app.state.automation
+
     logger.info(
         "pihome-hub starting",
         extra={
             "version": __version__,
             "backend": settings.gpio_backend,
             "relays": len(service.configured),
+            "sensors": len(sensors.configured),
+            "automation_rules": len(engine.rules),
             "docs_enabled": settings.docs_enabled,
         },
     )
     try:
         yield
     finally:
+        # Cancel pending holds first: a revert firing against a closed relay service
+        # would be a confusing traceback on the way out.
+        await engine.aclose()
+        app.state.automation = None
         if owned:
             service.close()
             app.state.relays = None
         logger.info("pihome-hub stopped")
 
 
-async def _unknown_relay_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Map an unknown relay id to 404 rather than letting it become a 500."""
+async def _not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map an unknown relay or device id to 404 rather than letting it become a 500."""
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
@@ -100,7 +134,7 @@ async def _validation_handler(request: Request, exc: Exception) -> JSONResponse:
         )
 
     try:
-        authenticate_or_none(request)
+        authenticate_any_scope(request)
     except HTTPException as auth_error:
         return JSONResponse(
             status_code=auth_error.status_code,
@@ -152,9 +186,12 @@ def create_app(
     if relay_service is not None:
         app.state.relays = relay_service
 
-    app.add_exception_handler(UnknownRelayError, _unknown_relay_handler)
+    app.add_exception_handler(UnknownRelayError, _not_found_handler)
+    app.add_exception_handler(UnknownDeviceError, _not_found_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.include_router(system_router)
     app.include_router(relays_router)
+    app.include_router(read_router)
+    app.include_router(ingest_router)
 
     return app

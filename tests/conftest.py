@@ -30,6 +30,17 @@ RELAY_HEADERS = {"X-API-Key": VALID_KEY}
 SENSOR_HEADERS = {"X-API-Key": VALID_SENSOR_KEY}
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run ``@pytest.mark.anyio`` tests on asyncio only.
+
+    anyio's plugin comes in with Starlette, so async tests need no extra dependency;
+    the service itself only ever runs under uvicorn's asyncio loop, so testing the
+    trio backend as well would prove nothing.
+    """
+    return "asyncio"
+
+
 @pytest.fixture(autouse=True)
 def _isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in list(os.environ):

@@ -1,0 +1,44 @@
+# Copy to config/automation.yaml and edit — that file is git-ignored, this one is not.
+#
+#   cp config/automation.example.yaml config/automation.yaml
+#
+# The file is optional. Without it the service is a plain relay API with no
+# automatic behaviour, which is a perfectly reasonable way to run it.
+#
+# Every id referenced below is checked at startup: a rule pointing at a relay or a
+# device that does not exist stops the service with a message naming the rule,
+# rather than failing silently the first time someone walks past the sensor.
+
+# Needed only by rules using only_after_dark, to work out sunrise and sunset.
+# These coordinates identify your home — this file is git-ignored for that reason,
+# and they must never be written into source.
+location:
+  latitude: 50.4501
+  longitude: 30.5234
+  timezone: Europe/Kyiv
+
+rules:
+  # The classic: motion after dark turns the porch light on for a minute, and
+  # continued motion keeps restarting that minute rather than queueing more timers.
+  - id: porch-motion-light
+    when:
+      device: porch-motion
+      motion: true
+    only_after_dark: true
+    then:
+      relay: porch-light
+      state: on
+      hold_seconds: 60
+
+  # Same idea at the gate. Set `enabled: false` to keep a rule around without it
+  # running — handy while working out whether a sensor is placed well.
+  - id: gate-motion-light
+    enabled: true
+    when:
+      device: gate-camera
+      motion: true
+    only_after_dark: true
+    then:
+      relay: gate-light
+      state: on
+      hold_seconds: 120
