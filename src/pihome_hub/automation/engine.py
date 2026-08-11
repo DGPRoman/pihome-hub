@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from pihome_hub.automation.errors import AutomationConfigError
 from pihome_hub.automation.models import AutomationRule
@@ -36,7 +36,10 @@ class AutomationEngine:
     ) -> None:
         self._relays = relays
         self._sun = sun
-        self._rules = [rule for rule in rules if rule.enabled]
+        #: Every rule as configured. Kept so the API can report a disabled rule as
+        #: disabled rather than omitting it.
+        self._configured = list(rules)
+        self._rules = [rule for rule in self._configured if rule.enabled]
         #: One pending revert per relay, keyed by relay id — a second rule acting on
         #: the same relay replaces the first one's timer rather than racing it.
         self._holds: dict[str, asyncio.Task[None]] = {}
@@ -68,6 +71,11 @@ class AutomationEngine:
     @property
     def rules(self) -> Mapping[str, AutomationRule]:
         return {rule.id: rule for rule in self._rules}
+
+    @property
+    def configured(self) -> Sequence[AutomationRule]:
+        """Every rule, enabled or not, in configuration order."""
+        return tuple(self._configured)
 
     @property
     def pending_holds(self) -> frozenset[str]:
