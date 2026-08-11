@@ -7,10 +7,10 @@ runs declarative automation rules — the sort that turns on outdoor lights when
 sensor fires, but only after dark. It runs on a Raspberry Pi Zero 2 W that stays powered
 around the clock, and it is deliberately small enough to read in one sitting.
 
-> **Status: functional, deployment in progress.** Relay control, sensor ingestion and
-> automation all work and are covered by tests. There is a systemd unit — see
-> [Deployment](#deployment) — but no install script yet, so provisioning a Pi is still
-> a manual walk through those steps. See [Roadmap](#roadmap).
+> **Status: functional and deployable.** Relay control, sensor ingestion and automation
+> all work and are covered by tests, and two files provision a Raspberry Pi — see
+> [Deployment](#deployment). What is missing is documentation depth: no architecture
+> write-up and no troubleshooting guide yet. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -82,9 +82,10 @@ pytest                 # test
 ```
 
 CI runs all four on Python 3.11–3.13. The Pi Zero 2 W runs Raspberry Pi OS, whose system
-Python is 3.11 — that is the floor the project supports. It also runs
-`systemd-analyze verify` over the unit file, because systemd ignores a directive it does
-not recognise and pytest cannot tell a real one from a typo.
+Python is 3.11 — that is the floor the project supports. It also checks the two files in
+[`deploy/`](deploy/), which Python tooling does not read: `systemd-analyze verify` over the
+unit, because systemd ignores a directive it cannot spell, and `shellcheck` over the
+install script.
 
 ## Configuration
 
@@ -179,59 +180,55 @@ silently the first time someone walks past the sensor.
 
 ## Deployment
 
-[`deploy/pihome-hub.service`](deploy/pihome-hub.service) runs the service under systemd.
-It expects the code at `/opt/pihome-hub` and its environment at
-`/etc/pihome-hub/hub.env`; edit the unit if you want other paths.
-
-A service account first. It needs no home, no shell and no group of its own beyond the
-one `useradd` makes — the unit grants `gpio` itself, so that membership is not something
-to remember here:
-
-```bash
-sudo useradd --system --shell /usr/sbin/nologin pihome
-```
-
-Then the code, installed rather than linked, so that pip byte-compiles it once instead of
-the service recompiling on every start against a read-only filesystem:
+Two files provision a Pi: the unit,
+[`deploy/pihome-hub.service`](deploy/pihome-hub.service), and the script that installs it,
+[`deploy/install.sh`](deploy/install.sh).
 
 ```bash
 sudo git clone https://github.com/DGPRoman/pihome-hub.git /opt/pihome-hub
-sudo python3 -m venv /opt/pihome-hub/.venv
-sudo /opt/pihome-hub/.venv/bin/pip install '/opt/pihome-hub[rpi]'
+sudo /opt/pihome-hub/deploy/install.sh
 ```
 
-Then the environment. systemd reads this file as PID 1 and passes the values in, so it
-stays root-owned and the service account never gets to read it:
+That creates the service account, builds a virtualenv in the checkout, generates both API
+keys, copies the example wiring, and enables the unit. Describe your own wiring, then
+start it:
 
 ```bash
-sudo install -d -m 700 /etc/pihome-hub
-sudo install -m 600 /dev/null /etc/pihome-hub/hub.env
-sudoedit /etc/pihome-hub/hub.env
+sudoedit /etc/pihome-hub/relays.yaml
+sudo systemctl start pihome-hub.service
+sudo grep PIHOME_RELAY_API_KEY /etc/pihome-hub/hub.env
 ```
 
-```ini
-PIHOME_RELAY_API_KEY=paste-a-generated-key
-PIHOME_SENSOR_API_KEY=paste-a-different-generated-key
-PIHOME_GPIO_BACKEND=gpiozero
-PIHOME_RELAY_CONFIG_PATH=/etc/pihome-hub/relays.yaml
-PIHOME_SENSOR_CONFIG_PATH=/etc/pihome-hub/sensors.yaml
-PIHOME_AUTOMATION_CONFIG_PATH=/etc/pihome-hub/automation.yaml
-```
+Upgrading is `git -C /opt/pihome-hub pull` and the same script again. It rewrites neither
+a generated key nor an edited YAML file, and on a host that is already configured it
+restarts the service and waits for `/health` before claiming success.
 
-Bare `KEY=value` lines: systemd is not a shell, so quotes end up in the value and `$FOO`
-is not expanded. Copy the YAML files next to it, then start the service:
+| Path | Ownership | Holds |
+| --- | --- | --- |
+| `/opt/pihome-hub` | `root` | the checkout and its `.venv` |
+| `/etc/pihome-hub/hub.env` | `root:root`, `600` | both API keys and every `PIHOME_*` setting |
+| `/etc/pihome-hub/relays.yaml` | `root:pihome`, `640` | the wiring |
+| `/etc/systemd/system/pihome-hub.service` | `root` | the unit |
 
-```bash
-sudo cp /opt/pihome-hub/deploy/pihome-hub.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now pihome-hub
+**Two permissions, because two different things read them.** `hub.env` is opened by systemd
+as PID 1, which passes the values in as environment — so the service account never needs
+the secrets and does not get them. The YAML is read by the process itself, so its
+directory is group-readable and the file is group-owned by `pihome`.
 
-curl -fsS http://127.0.0.1:5002/health
-journalctl -u pihome-hub -n 20
-```
+**The script reads the unit rather than repeating it.** Paths, the service account and the
+GPIO group are parsed out of `pihome-hub.service`, so editing the unit is enough and the
+two cannot disagree about where anything lives.
 
-Upgrading is `git -C /opt/pihome-hub pull`, the same `pip install`, then
-`systemctl restart pihome-hub`.
+**Real pins are opted into by hardware, not by a flag.** The script installs the `rpi`
+extra and selects the `gpiozero` backend when `/dev/gpiochip0` is there, and the mock
+backend when it is not — so the same command provisions a Pi and a test box. A host with
+GPIO chips but no `gpiochip0` (a Pi 5 numbers them differently) is an error rather than a
+silent downgrade to the mock.
+
+**A fresh install is enabled but not started.** The example wiring names pins chosen for
+somebody else's board, and starting on it would close relays at random. So the first run
+stops after `systemctl enable` and says what to edit; the run after that starts the
+service.
 
 **A bad configuration stops the service instead of looping.** The process exits 2 when
 settings do not validate, and the unit refuses to restart on that code, so the message
@@ -271,7 +268,7 @@ src/pihome_hub/
     ├── config.py      loads config/relays.yaml
     └── service.py     logical on/off/toggle over configured relays
 config/                relays.example.yaml — copy and edit; the real file is ignored
-deploy/                pihome-hub.service — the systemd unit
+deploy/                pihome-hub.service and install.sh — provisioning a Pi
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -283,8 +280,8 @@ tests/                 runs without hardware, against the mock backend
 | 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
 | 3 | `/v1` REST API, API-key authentication | ✅ done |
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
-| 5 | systemd unit, install script, deployment hardening | unit done, script next |
-| 6 | Architecture, installation, migration and troubleshooting docs | |
+| 5 | systemd unit, install script, deployment hardening | ✅ done |
+| 6 | Architecture, installation, migration and troubleshooting docs | next |
 
 ## License
 
