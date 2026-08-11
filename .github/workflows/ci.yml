@@ -53,6 +53,29 @@ jobs:
           fi
           echo "No .env in the index."
 
+  unit-file:
+    name: Systemd unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify with systemd-analyze
+        # A misspelled directive is silently ignored by systemd — and reported here as a
+        # warning that still exits 0 — so the output, not the status, is the check. Stub
+        # the ExecStart path first: an absent binary is the one complaint expected on a
+        # runner, and stubbing it is cheaper than pattern-matching the message.
+        run: |
+          sudo install -d /opt/pihome-hub/.venv/bin
+          sudo ln -sf /usr/bin/true /opt/pihome-hub/.venv/bin/pihome-hub
+
+          output=$(systemd-analyze verify deploy/pihome-hub.service 2>&1)
+          if [ -n "$output" ]; then
+            echo "$output"
+            echo "::error file=deploy/pihome-hub.service::systemd-analyze reported a problem"
+            exit 1
+          fi
+          echo "Unit file is valid."
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
