@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pihome_hub.automation import AutomationRule
 from pihome_hub.sensors import DeviceSnapshot
 
 
@@ -48,3 +49,15 @@ class SensorCollection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     sensors: list[DeviceSnapshot]
+
+
+class AutomationRuleCollection(BaseModel):
+    """Every configured automation rule.
+
+    Carries no ``location``: the coordinates that block belongs to identify a home,
+    and nothing here needs them.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    rules: list[AutomationRule]

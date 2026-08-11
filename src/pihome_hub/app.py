@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from pihome_hub import __version__
 from pihome_hub.api.system import router as system_router
+from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
 from pihome_hub.automation import AutomationEngine, SunClock, load_automation
@@ -193,5 +194,6 @@ def create_app(
     app.include_router(relays_router)
     app.include_router(read_router)
     app.include_router(ingest_router)
+    app.include_router(automation_router)
 
     return app
