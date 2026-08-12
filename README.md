@@ -7,10 +7,10 @@ runs declarative automation rules — the sort that turns on outdoor lights when
 sensor fires, but only after dark. It runs on a Raspberry Pi Zero 2 W that stays powered
 around the clock, and it is deliberately small enough to read in one sitting.
 
-> **Status: functional, not yet deployed.** Relay control, sensor ingestion and
-> automation all work and are covered by tests. Deployment tooling — the systemd unit
-> and install script — is next, so for now it runs from a checkout. See
-> [Roadmap](#roadmap).
+> **Status: functional and deployable.** Relay control, sensor ingestion and automation
+> all work and are covered by tests, and two files provision a Raspberry Pi — see
+> [Deployment](#deployment). What is missing is documentation depth: no architecture
+> write-up and no troubleshooting guide yet. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -82,7 +82,10 @@ pytest                 # test
 ```
 
 CI runs all four on Python 3.11–3.13. The Pi Zero 2 W runs Raspberry Pi OS, whose system
-Python is 3.11 — that is the floor the project supports.
+Python is 3.11 — that is the floor the project supports. It also checks the two files in
+[`deploy/`](deploy/), which Python tooling does not read: `systemd-analyze verify` over the
+unit, because systemd ignores a directive it cannot spell, and `shellcheck` over the
+install script.
 
 ## Configuration
 
@@ -175,6 +178,77 @@ Every id a rule names is checked at startup: a rule pointing at a relay or devic
 does not exist stops the service with a message naming the rule, rather than failing
 silently the first time someone walks past the sensor.
 
+## Deployment
+
+Two files provision a Pi: the unit,
+[`deploy/pihome-hub.service`](deploy/pihome-hub.service), and the script that installs it,
+[`deploy/install.sh`](deploy/install.sh).
+
+```bash
+sudo git clone https://github.com/DGPRoman/pihome-hub.git /opt/pihome-hub
+sudo /opt/pihome-hub/deploy/install.sh
+```
+
+That creates the service account, builds a virtualenv in the checkout, generates both API
+keys, copies the example wiring, and enables the unit. Describe your own wiring, then
+start it:
+
+```bash
+sudoedit /etc/pihome-hub/relays.yaml
+sudo systemctl start pihome-hub.service
+sudo grep PIHOME_RELAY_API_KEY /etc/pihome-hub/hub.env
+```
+
+Upgrading is `git -C /opt/pihome-hub pull` and the same script again. It rewrites neither
+a generated key nor an edited YAML file, and on a host that is already configured it
+restarts the service and waits for `/health` before claiming success.
+
+| Path | Ownership | Holds |
+| --- | --- | --- |
+| `/opt/pihome-hub` | `root` | the checkout and its `.venv` |
+| `/etc/pihome-hub/hub.env` | `root:root`, `600` | both API keys and every `PIHOME_*` setting |
+| `/etc/pihome-hub/relays.yaml` | `root:pihome`, `640` | the wiring |
+| `/etc/systemd/system/pihome-hub.service` | `root` | the unit |
+
+**Two permissions, because two different things read them.** `hub.env` is opened by systemd
+as PID 1, which passes the values in as environment — so the service account never needs
+the secrets and does not get them. The YAML is read by the process itself, so its
+directory is group-readable and the file is group-owned by `pihome`.
+
+**The script reads the unit rather than repeating it.** Paths, the service account and the
+GPIO group are parsed out of `pihome-hub.service`, so editing the unit is enough and the
+two cannot disagree about where anything lives.
+
+**Real pins are opted into by hardware, not by a flag.** The script installs the `rpi`
+extra and selects the `gpiozero` backend when `/dev/gpiochip0` is there, and the mock
+backend when it is not — so the same command provisions a Pi and a test box. A host with
+GPIO chips but no `gpiochip0` (a Pi 5 numbers them differently) is an error rather than a
+silent downgrade to the mock.
+
+**A fresh install is enabled but not started.** The example wiring names pins chosen for
+somebody else's board, and starting on it would close relays at random. So the first run
+stops after `systemctl enable` and says what to edit; the run after that starts the
+service.
+
+**A bad configuration stops the service instead of looping.** The process exits 2 when
+settings do not validate, and the unit refuses to restart on that code, so the message
+naming the offending variable stays at the end of the journal rather than scrolling past
+every five seconds.
+
+**The sandbox is tight, and two options are deliberately missing from it.** The
+filesystem is read-only with no writable exception, capabilities are dropped entirely,
+syscalls are filtered to `@system-service`, and `/dev` is denied except the one GPIO
+character device. `PrivateDevices=` and `ProcSubset=` are absent on purpose: the first
+hides `/dev/gpiochip0`, the second hides the `/proc/device-tree` that gpiozero reads to
+identify the board. A test asserts neither gets enabled. Review the rest with
+`systemd-analyze security pihome-hub`.
+
+Two things the unit does not solve. `SupplementaryGroups=gpio` assumes that group exists,
+which it does on Raspberry Pi OS and often does not elsewhere. And the service still binds
+loopback: reaching it from the LAN means setting `PIHOME_HOST`, and since it speaks plain
+HTTP with a static key, that should mean a VPN or a reverse proxy terminating TLS, not an
+open port.
+
 ## Project layout
 
 ```
@@ -194,6 +268,7 @@ src/pihome_hub/
     ├── config.py      loads config/relays.yaml
     └── service.py     logical on/off/toggle over configured relays
 config/                relays.example.yaml — copy and edit; the real file is ignored
+deploy/                pihome-hub.service and install.sh — provisioning a Pi
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -205,8 +280,8 @@ tests/                 runs without hardware, against the mock backend
 | 2 | Relay backend interface, `gpiozero` and mock implementations, relay service | ✅ done |
 | 3 | `/v1` REST API, API-key authentication | ✅ done |
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
-| 5 | systemd unit, install script, deployment hardening | next |
-| 6 | Architecture, installation, migration and troubleshooting docs | |
+| 5 | systemd unit, install script, deployment hardening | ✅ done |
+| 6 | Architecture, installation, migration and troubleshooting docs | next |
 
 ## License
 

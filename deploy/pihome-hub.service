@@ -1,0 +1,83 @@
+# Systemd unit for pihome-hub. See the deployment section of README.md.
+#
+# It assumes this layout:
+#   /opt/pihome-hub          checkout, root-owned, with .venv inside
+#   /etc/pihome-hub/hub.env  API keys and config paths, root-owned, mode 600
+#
+# Change the paths if yours differ. Everything below them is deliberate.
+
+[Unit]
+Description=pihome-hub relay control plane
+Documentation=https://github.com/DGPRoman/pihome-hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Not Type=simple: exec waits for the binary to be executed, so a missing venv is
+# a failed start rather than a service that reports active and then dies.
+Type=exec
+User=pihome
+Group=pihome
+# Real GPIO goes through /dev/gpiochip0, which the gpio group owns.
+SupplementaryGroups=gpio
+
+WorkingDirectory=/opt/pihome-hub
+ExecStart=/opt/pihome-hub/.venv/bin/pihome-hub
+
+# The keys stay out of the checkout and out of this file. systemd reads it as PID 1,
+# so the service user never needs access to the file itself.
+EnvironmentFile=/etc/pihome-hub/hub.env
+
+Restart=on-failure
+RestartSec=5s
+# Exit code 2 means the configuration is invalid. Restarting cannot fix that, and a
+# crash loop would bury the one journal line explaining what to change.
+RestartPreventExitStatus=2
+
+# Relays are driven to their shutdown_state on the way out. Leave room for that,
+# but not enough that a wedged process delays a reboot.
+TimeoutStopSec=20s
+
+SyslogIdentifier=pihome-hub
+
+# -- Sandbox -----------------------------------------------------------------
+# Nothing is written at runtime: readings live in memory and logs go to the journal.
+# So the filesystem stays read-only, with no ReadWritePaths= exception.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+UMask=0077
+
+# ProcSubset=pid is deliberately absent: gpiozero identifies the board by reading
+# /proc/device-tree, which that option would hide.
+
+# Listening on 5002 needs no capability, and neither does anything else here.
+CapabilityBoundingSet=
+
+# AF_NETLINK is not a route to the network — glibc opens one to enumerate local
+# interfaces during name resolution.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# PrivateDevices=yes would be shorter, but it hides /dev/gpiochip0 along with
+# everything else. Deny the lot, then hand back the one device that matters.
+# Pi 5 numbers its chips differently — check `ls /dev/gpiochip*` first.
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+
+[Install]
+WantedBy=multi-user.target
