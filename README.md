@@ -230,9 +230,10 @@ somebody else's board, and starting on it would close relays at random. So the f
 stops after `systemctl enable` and says what to edit; the run after that starts the
 service.
 
-**A bad configuration stops the service instead of looping.** The process exits 2 when
-settings do not validate, and the unit refuses to restart on that code, so the message
-naming the offending variable stays at the end of the journal rather than scrolling past
+**A bad configuration stops the service instead of looping.** Every settings variable and
+every configuration file is read before the process starts listening, and any of them
+being wrong exits 2 — a code the unit refuses to restart on. So the one line naming the
+offending variable or rule stays at the end of the journal rather than scrolling past
 every five seconds.
 
 **The sandbox is tight, and two options are deliberately missing from it.** The

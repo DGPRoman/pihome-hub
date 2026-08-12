@@ -20,9 +20,11 @@ from typing import Final
 import uvicorn
 from pydantic import ValidationError
 
-from pihome_hub.app import build_relay_service, create_app
+from pihome_hub.app import build_relay_service, check_configuration, create_app
+from pihome_hub.automation import AutomationError
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.relays import RelayError
+from pihome_hub.sensors import SensorError
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -68,14 +70,15 @@ def main() -> None:
         sys.stderr.write(render_configuration_error(exc) + "\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
-    # Built before the server starts so a bad relay config — or a pin this host will
-    # not give us — is reported plainly rather than as a traceback from inside a
-    # running event loop. RelayError covers both the configuration and hardware cases;
-    # catching only the former let gpiozero's own exceptions escape as a raw traceback
-    # with the wrong exit code, which a Restart=always unit turns into a crash loop.
+    # Every configuration file is read before the server starts, so a mistake in one is
+    # reported plainly rather than as a traceback from inside a running event loop.
+    # The base classes are caught, not the config-specific subclasses: catching only
+    # RelayConfigError once let gpiozero's own exceptions escape as a raw traceback
+    # with the wrong exit code, which a restarting unit turns into a crash loop.
     try:
         relay_service = build_relay_service(settings)
-    except RelayError as exc:
+        check_configuration(settings, relay_service)
+    except (RelayError, SensorError, AutomationError) as exc:
         sys.stderr.write(f"pihome-hub: {exc}\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 
