@@ -9,8 +9,8 @@ around the clock, and it is deliberately small enough to read in one sitting.
 
 > **Status: functional and deployable.** Relay control, sensor ingestion and automation
 > all work and are covered by tests, and two files provision a Raspberry Pi — see
-> [Deployment](#deployment). What is missing is documentation depth: no architecture
-> write-up and no troubleshooting guide yet. See [Roadmap](#roadmap).
+> [Deployment](#deployment) and [Troubleshooting](docs/troubleshooting.md). What is still
+> missing is an architecture write-up. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -130,6 +130,7 @@ Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
 | `GET` | `/v1/sensors` | Every sensor, its latest reading, and whether it is stale |
 | `GET` | `/v1/sensors/{id}` | Read one sensor |
 | `POST` | `/v1/sensors/{id}/readings` | Push a reading — **sensor key**, not the relay key |
+| `GET` | `/v1/automation/rules` | Every configured rule, including the disabled ones |
 
 ```console
 $ curl -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
@@ -270,6 +271,7 @@ src/pihome_hub/
     └── service.py     logical on/off/toggle over configured relays
 config/                relays.example.yaml — copy and edit; the real file is ignored
 deploy/                pihome-hub.service and install.sh — provisioning a Pi
+docs/                  troubleshooting.md — symptoms, with the messages they produce
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -282,7 +284,11 @@ tests/                 runs without hardware, against the mock backend
 | 3 | `/v1` REST API, API-key authentication | ✅ done |
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
 | 5 | systemd unit, install script, deployment hardening | ✅ done |
-| 6 | Architecture, installation, migration and troubleshooting docs | next |
+| 6 | Architecture, installation, migration and troubleshooting docs | in progress |
+
+Installation is covered by [Deployment](#deployment) and
+[Troubleshooting](docs/troubleshooting.md) is written. What remains in phase 6 is the
+architecture write-up and a note on moving a working installation to a new Pi.
 
 ## License
 
