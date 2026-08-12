@@ -62,6 +62,19 @@ def build_automation_engine(
     return AutomationEngine(relays, config.rules, sun=sun, sensors=sensors)
 
 
+def check_configuration(settings: Settings, relays: RelayService) -> None:
+    """Prove the sensor and automation files are usable before the server starts.
+
+    The engine the service runs on is built by the lifespan, inside the loop that owns
+    its timers. This builds one and throws it away, because construction is where the
+    reference checking lives and an engine that has scheduled nothing holds nothing to
+    release. The cost is reading two small YAML files twice at startup. The alternative
+    is a typo in a rule escaping as a traceback from inside uvicorn's own startup,
+    which exits 3 — a code the unit treats as worth retrying, forever.
+    """
+    build_automation_engine(settings, relays, build_sensor_store(settings))
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Acquire and release the relay service for the lifetime of the process.
