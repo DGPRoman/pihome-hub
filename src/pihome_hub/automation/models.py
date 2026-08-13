@@ -30,7 +30,7 @@ class Location(BaseModel):
     version of this service had them written into a function body.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     latitude: Annotated[float, Field(ge=-90.0, le=90.0)]
     longitude: Annotated[float, Field(ge=-180.0, le=180.0)]

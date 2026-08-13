@@ -22,7 +22,7 @@ DEFAULT_STALE_AFTER_SECONDS: Final = 300.0
 class SensorDevice(BaseModel):
     """A sensor this service will accept readings from."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=100)

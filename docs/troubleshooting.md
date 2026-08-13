@@ -52,6 +52,7 @@ Match the line, not the exit code — they all exit 2.
 | `invalid relay configuration in …: Input should be less than or equal to 27` | A pin outside the BCM range | Use a real BCM number, not a physical pin number |
 | `pin 17 is used by both 'a' and 'b'` | Two relays on one pin | Give each its own |
 | `duplicate relay id 'a'` | Two relays share an id | Ids address relays over HTTP; they must be unique |
+| `0.active-low` then `Extra inputs are not permitted` | A misspelled or invented key. The path names it: `0` is the first entry in the list | Fix the spelling against the matching `.example.yaml`. Every config file refuses keys it does not recognise, rather than ignoring them |
 | `automation rule 'r1' triggers on device 'ghost', which is not configured. Known devices: []` | A rule names a sensor that does not exist. The known ids are listed for comparison | Fix the id in `automation.yaml`, or add the device to `sensors.yaml` |
 | `automation rule 'r1' targets relay 'gate-light', which is not configured` | Same, for the relay side | As above |
 | `automation rule 'r1' uses only_after_dark but no location is set` | Darkness needs coordinates | Add a `location` block to `automation.yaml` |
@@ -98,7 +99,7 @@ ls /dev/gpiochip*                                  # gpiochip0 is what the unit 
 | `could not claim pin 17 for relay 'porch-light': …` at startup | The pin is held by something else, the service user is not in `gpio`, or the extra is missing. The message names all three |
 | The unit starts on a Pi 5 but no pin responds | The unit's `DeviceAllow=/dev/gpiochip0` is hard-coded, and a Pi 5 numbers its chips differently. Check `ls /dev/gpiochip*` and edit the unit |
 | Every relay is inverted | `active_low` does not match the board. Active-low boards are the norm |
-| One relay is inverted and the config looks right | An unrecognised key is currently accepted in silence, so `active-low: true` reads as nothing at all. Check the spelling of every key against `config/relays.example.yaml` |
+| One relay is inverted and the config looks right | `active_low` is set per relay, not globally — check that one entry. A misspelled key cannot be the cause: unknown keys are refused at startup |
 | Relays change state while the service is stopped | Expected, and not fixable in software. A released GPIO pin returns to an input with no pull, so a stopped service leaves each relay following the board's idle level. `shutdown_state` governs only the moment before release |
 
 ## The API refuses the request
