@@ -40,7 +40,11 @@ _MAX_BCM_PIN: Final = 27
 class RelayConfig(BaseModel):
     """One controllable relay channel, as declared in ``config/relays.yaml``."""
 
-    model_config = ConfigDict(frozen=True)
+    # An unrecognised key is refused rather than ignored. Every field here has a
+    # safe-looking default or a hyphenated near-miss — ``active-low`` for
+    # ``active_low`` reads as nothing at all — and silently accepting one means
+    # running a relay at the wrong polarity with a config file that looks correct.
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(min_length=1, max_length=64)
     pin: int = Field(ge=_MIN_BCM_PIN, le=_MAX_BCM_PIN)

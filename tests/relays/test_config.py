@@ -57,3 +57,14 @@ class TestLoadRelays:
 
         with pytest.raises(RelayConfigError, match="invalid relay configuration"):
             load_relays(config_file)
+
+    def test_a_misspelled_key_is_refused_rather_than_ignored(self, tmp_path: Path) -> None:
+        """Ignoring it would run the relay at the default polarity, config looking fine."""
+        config_file = tmp_path / "relays.yaml"
+        config_file.write_text(
+            "relays:\n  - id: porch-light\n    pin: 17\n    label: x\n    active-low: false\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(RelayConfigError, match="active-low"):
+            load_relays(config_file)
