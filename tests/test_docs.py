@@ -1,9 +1,9 @@
 """Guards against documentation drifting away from the code it describes.
 
-A troubleshooting guide is only worth having if the messages and numbers in it are
-still the ones the service produces. Prose cannot be type-checked, so the parts that
-are machine-checkable are checked here: the paths it points at, and every constant it
-quotes at the reader as a fact.
+Documentation is only worth having if what it states is still true — a quoted error
+message, a path, a constant, the name of a test it points at as proof. Prose cannot be
+type-checked, so everything in it that is machine-checkable is checked here, and every
+document under ``docs/`` is swept without having to be listed.
 """
 
 from __future__ import annotations
@@ -17,7 +17,11 @@ from pihome_hub.__main__ import EXIT_CONFIGURATION_ERROR
 from pihome_hub.config import MIN_API_KEY_LENGTH, Settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TROUBLESHOOTING = REPO_ROOT / "docs" / "troubleshooting.md"
+DOCS = REPO_ROOT / "docs"
+TROUBLESHOOTING = DOCS / "troubleshooting.md"
+
+#: Every document under docs/, so a new one is covered without being listed here.
+_DOC_NAMES = sorted(path.name for path in DOCS.glob("*.md"))
 
 
 @pytest.fixture(scope="module")
@@ -30,25 +34,45 @@ def readme() -> str:
     return (REPO_ROOT / "README.md").read_text()
 
 
-class TestTheGuideIsReachable:
-    def test_the_readme_links_to_it(self, readme: str) -> None:
-        """An unlinked guide is one nobody in trouble will find."""
-        assert "docs/troubleshooting.md" in readme
+class TestEveryDocumentIsReachable:
+    @pytest.mark.parametrize("name", _DOC_NAMES)
+    def test_the_readme_links_to_it(self, name: str, readme: str) -> None:
+        """An unlinked document is one nobody will find when they need it."""
+        assert f"docs/{name}" in readme
 
 
-class TestEveryPathItPointsAtExists:
-    def test_no_backticked_repository_path_is_stale(self, guide: str) -> None:
-        # Only paths with a directory component, and only relative ones: an absolute
-        # path in this guide is on the Pi (/etc/pihome-hub) or in /dev, not in here.
-        referenced = {
-            match
-            for match in re.findall(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+)`", guide)
+class TestEveryPathTheDocsPointAtExists:
+    @pytest.mark.parametrize("name", _DOC_NAMES)
+    def test_no_relative_link_or_backticked_path_is_stale(self, name: str) -> None:
+        text = (DOCS / name).read_text()
+
+        # Markdown links are relative to docs/; backticked paths are written from the
+        # repository root. Absolute ones live on the Pi (/etc, /dev) and are skipped.
+        links = {(DOCS / target) for target in re.findall(r"\]\((\.\.?/[^)#]+)", text)}
+        quoted = {
+            (REPO_ROOT / match)
+            for match in re.findall(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+)`", text)
             if not match.startswith("/")
         }
-        assert referenced, "path extraction found nothing — this test is out of date"
+        assert links | quoted, f"{name}: path extraction found nothing — this test is out of date"
 
-        missing = sorted(path for path in referenced if not (REPO_ROOT / path).exists())
-        assert not missing, f"the guide points at paths that do not exist: {missing}"
+        missing = sorted(str(path) for path in links | quoted if not path.exists())
+        assert not missing, f"{name} points at paths that do not exist: {missing}"
+
+
+class TestTheArchitectureNotesCiteRealTests:
+    def test_every_test_class_it_names_exists(self) -> None:
+        """Naming a guard that has been renamed away is worse than naming none."""
+        text = (DOCS / "architecture.md").read_text()
+        cited = set(re.findall(r"`(Test[A-Za-z0-9_]+)`", text))
+        assert cited, "no test class is cited — this test is out of date"
+
+        defined = {
+            name
+            for source in (REPO_ROOT / "tests").rglob("*.py")
+            for name in re.findall(r"^class (Test[A-Za-z0-9_]+)", source.read_text(), re.MULTILINE)
+        }
+        assert cited <= defined, f"cited but not defined: {sorted(cited - defined)}"
 
 
 class TestEveryNumberItQuotesIsStillTrue:
