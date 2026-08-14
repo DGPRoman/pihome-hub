@@ -40,9 +40,16 @@ TimeoutStopSec=20s
 
 SyslogIdentifier=pihome-hub
 
+# The one thing written at runtime: accounts and sessions. systemd creates
+# /var/lib/pihome-hub owned by User=, and punches it through ProtectSystem=strict
+# without a ReadWritePaths= exception naming a path that could then drift.
+# 0700 because the file holds password hashes and live session tokens; the default
+# 0755 would let every account on the Pi read them.
+StateDirectory=pihome-hub
+StateDirectoryMode=0700
+
 # -- Sandbox -----------------------------------------------------------------
-# Nothing is written at runtime: readings live in memory and logs go to the journal.
-# So the filesystem stays read-only, with no ReadWritePaths= exception.
+# Everything else stays read-only: readings live in memory, logs go to the journal.
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

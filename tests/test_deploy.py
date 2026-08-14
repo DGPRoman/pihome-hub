@@ -19,6 +19,7 @@ import pytest
 
 from pihome_hub.__main__ import EXIT_CONFIGURATION_ERROR
 from pihome_hub.config import Settings
+from tests.conftest import build_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UNIT_PATH = REPO_ROOT / "deploy" / "pihome-hub.service"
@@ -66,6 +67,25 @@ class TestUnitMatchesTheCode:
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         assert Path(service["ExecStart"]).name in pyproject["project"]["scripts"]
+
+
+class TestTheUnitGivesTheServiceSomewhereToWrite:
+    def test_it_declares_a_state_directory(self, service: dict[str, str]) -> None:
+        """ProtectSystem=strict leaves nothing writable without one."""
+        assert service.get("StateDirectory") == "pihome-hub"
+
+    def test_the_state_directory_is_not_world_readable(self, service: dict[str, str]) -> None:
+        """It holds password hashes and live session tokens; 0755 is the default."""
+        assert service.get("StateDirectoryMode") == "0700"
+
+    def test_the_database_default_follows_the_unit(
+        self, service: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The path is derived from STATE_DIRECTORY, which systemd exports from this."""
+        state_directory = Path("/var/lib") / service["StateDirectory"]
+        monkeypatch.setenv("STATE_DIRECTORY", str(state_directory))
+
+        assert build_settings().database_path.parent == state_directory
 
 
 class TestSandboxLeavesTheHardwareReachable:

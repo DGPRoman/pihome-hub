@@ -9,6 +9,7 @@ unrelated variables from the surrounding environment. Secrets are typed as
 from __future__ import annotations
 
 import ipaddress
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, Literal
@@ -35,6 +36,18 @@ _REJECTED_KEY_MARKERS: Final = (
     "replaceme",
     "yourkeyhere",
 )
+
+
+def _state_directory() -> Path:
+    """The writable directory systemd made for this unit, or a local stand-in.
+
+    ``STATE_DIRECTORY`` holds one entry per ``StateDirectory=`` in the unit, joined
+    by colons. This service declares one; taking the first entry keeps that true
+    rather than assuming it.
+    """
+    exported = os.environ.get("STATE_DIRECTORY", "")
+    first = exported.split(":")[0]
+    return Path(first) if first else Path("var")
 
 
 class Settings(BaseSettings):
@@ -76,6 +89,14 @@ class Settings(BaseSettings):
     #: simply not in use, not that the deployment is broken.
     sensor_config_path: Path = Path("config/sensors.yaml")
     automation_config_path: Path = Path("config/automation.yaml")
+
+    # -- State ---------------------------------------------------------------
+    #: Where accounts and sessions live. The default follows the unit rather than
+    #: repeating it: systemd exports STATE_DIRECTORY for every StateDirectory= it
+    #: created, so the one declaration in pihome-hub.service decides this on a Pi
+    #: and nothing in hub.env can drift away from it. Off systemd it falls back to
+    #: a path beside the checkout, which is what a development run wants.
+    database_path: Path = Field(default_factory=lambda: _state_directory() / "hub.db")
 
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window

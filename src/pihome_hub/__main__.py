@@ -25,6 +25,7 @@ from pihome_hub.automation import AutomationError
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.relays import RelayError
 from pihome_hub.sensors import SensorError
+from pihome_hub.storage import StorageError, prepare_database
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -79,6 +80,16 @@ def main() -> None:
         relay_service = build_relay_service(settings)
         check_configuration(settings, relay_service)
     except (RelayError, SensorError, AutomationError) as exc:
+        sys.stderr.write(f"pihome-hub: {exc}\n")
+        raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
+
+    # Here rather than in the lifespan for the same reason as everything above: an
+    # unwritable state directory or a schema from a newer build is an operator
+    # problem, and it should read as one line rather than a traceback out of
+    # uvicorn's startup with an exit code the unit retries.
+    try:
+        prepare_database(settings.database_path)
+    except StorageError as exc:
         sys.stderr.write(f"pihome-hub: {exc}\n")
         raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
 

@@ -46,6 +46,10 @@ def _isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     for name in list(os.environ):
         if name.startswith("PIHOME_"):
             monkeypatch.delenv(name, raising=False)
+    # Not a PIHOME_ variable, but systemd exports it and the database path falls
+    # back to it. A developer running the suite from inside a unit would otherwise
+    # have tests writing to that unit's real state directory.
+    monkeypatch.delenv("STATE_DIRECTORY", raising=False)
     monkeypatch.chdir(tmp_path)
     # get_settings() memoises; without this a single resolution would leak into
     # every later test in the session.
