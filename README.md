@@ -9,8 +9,9 @@ around the clock, and it is deliberately small enough to read in one sitting.
 
 > **Status: functional and deployable.** Relay control, sensor ingestion and automation
 > all work and are covered by tests, and two files provision a Raspberry Pi. See
-> [Deployment](#deployment), [Architecture](docs/architecture.md) and
-> [Troubleshooting](docs/troubleshooting.md).
+> [Deployment](#deployment), [Architecture](docs/architecture.md),
+> [Troubleshooting](docs/troubleshooting.md) and [Moving to another
+> Pi](docs/migration.md).
 
 ## Why this exists
 
@@ -202,7 +203,8 @@ sudo grep PIHOME_RELAY_API_KEY /etc/pihome-hub/hub.env
 
 Upgrading is `git -C /opt/pihome-hub pull` and the same script again. It rewrites neither
 a generated key nor an edited YAML file, and on a host that is already configured it
-restarts the service and waits for `/health` before claiming success.
+restarts the service and waits for `/health` before claiming success. Replacing the Pi
+rather than upgrading it: [Moving to another Pi](docs/migration.md).
 
 | Path | Ownership | Holds |
 | --- | --- | --- |
@@ -271,7 +273,7 @@ src/pihome_hub/
     └── service.py     logical on/off/toggle over configured relays
 config/                relays.example.yaml — copy and edit; the real file is ignored
 deploy/                pihome-hub.service and install.sh — provisioning a Pi
-docs/                  architecture.md — the shape; troubleshooting.md — symptoms
+docs/                  architecture.md, troubleshooting.md, migration.md
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -284,11 +286,10 @@ tests/                 runs without hardware, against the mock backend
 | 3 | `/v1` REST API, API-key authentication | ✅ done |
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
 | 5 | systemd unit, install script, deployment hardening | ✅ done |
-| 6 | Architecture, installation, migration and troubleshooting docs | in progress |
+| 6 | Architecture, installation, migration and troubleshooting docs | ✅ done |
 
-Installation is covered by [Deployment](#deployment), and both
-[Architecture](docs/architecture.md) and [Troubleshooting](docs/troubleshooting.md) are
-written. What remains in phase 6 is a note on moving a working installation to a new Pi.
+The next real piece of work is authentication: two static keys, no sessions and no users
+is what blocks the [web client's](https://github.com/DGPRoman/pihome-hub-web) own roadmap.
 
 ## License
 
