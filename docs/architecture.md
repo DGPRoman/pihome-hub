@@ -53,14 +53,16 @@ makes it useful for saying whether the service is up without handing out a crede
 Three rules, each of which holds today and is asserted by
 [`tests/test_layering.py`](../tests/test_layering.py):
 
-1. **No domain package imports FastAPI, Starlette, uvicorn, or `pihome_hub.api`.** The
-   relay, sensor and automation packages are plain Python. That is why the whole of the
-   automation engine can be tested by calling it, with no client and no event loop
-   ceremony beyond `asyncio`.
+1. **No domain package imports FastAPI, Starlette, uvicorn, or `pihome_hub.api`.** Every
+   one of them — `relays`, `sensors`, `automation`, `storage`, `accounts` — is plain
+   Python. That is why the whole of the automation engine can be tested by calling it,
+   with no client and no event loop ceremony beyond `asyncio`.
 2. **`relays` and `sensors` know nothing of each other, and nothing of `automation`.**
    The dependency runs one way: automation reaches into both, because a rule is by
    definition a statement about a sensor and a relay. Neither of them needs a rule to
-   exist.
+   exist. `storage` and `accounts` import none of the three: which table a domain keeps
+   its state in is that domain's business, and who may log in is not a statement about
+   any particular relay.
 3. **Only `app.py` chooses a backend.** The route modules never import `mock` or `gpio`;
    they receive a `RelayService` that already has one.
 
@@ -201,6 +203,46 @@ body, 404 for one that does not — usable with no key and counted by nothing. T
 `RequestValidationError` handler in `app.py` therefore re-checks authentication itself,
 using `authenticate_any_scope`: a narrower question than the route's, asking only "are you
 anonymous?", so it cannot be used to widen a scope.
+
+## How a password is stored
+
+Not a key this time but something a person chooses, which changes the requirements:
+guessable, reused elsewhere, and worth protecting even after the file is stolen.
+
+`src/pihome_hub/accounts/passwords.py` uses `hashlib.scrypt` — OpenSSL's, already present
+wherever Python is. Deliberately no dependency: this is the piece that must not fall
+behind on a Pi that is provisioned once and then left alone for months.
+
+A stored hash is one self-describing string:
+
+```
+scrypt$n=16384,r=8,p=1$<salt, base64>$<key, base64>
+```
+
+Recording the parameters is what makes them changeable. Verification uses the ones in the
+string rather than the ones in the code, so raising the work factor does not lock every
+account out at once; `needs_rehash()` reports the difference, and an account is upgraded
+at its next login — the one moment the plaintext is briefly in hand.
+
+Two decisions worth the words:
+
+- **The work factor is chosen against memory, not time.** scrypt holds `128 · r · n`
+  bytes — 16 MiB here — for the whole of one hash, and the board has 512 MB for the
+  entire system. It costs about 30 ms on a development machine and a few hundred on a Pi
+  Zero 2 W.
+- **Concurrency is capped in the module, at four.** scrypt releases the GIL, so hashes
+  really do run in parallel; unbounded, a burst of logins is uvicorn's forty threadpool
+  workers holding 640 MiB on a 512 MB board, and the kernel decides which process dies.
+  Callers queue instead. The cap lives with the memory cost rather than at the call site,
+  because a caller that has to remember to limit itself will not.
+
+Passwords are normalised to NFC before hashing, per RFC 8265: the same visible password
+can arrive as different bytes from different keyboards, and unnormalised those are two
+different passwords. Free to do now, impossible to add once accounts exist.
+
+A stored hash that does not parse raises rather than answering "wrong password". That is a
+corrupt row or a hand-edited database, and reporting it as a typo would send the operator
+looking in the wrong place.
 
 ## What is deliberately absent
 

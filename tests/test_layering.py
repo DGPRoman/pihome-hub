@@ -18,7 +18,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent.parent / "src" / "pihome_hub"
 #: Packages holding the logic and the state. None of them may know how requests
 #: arrive. ``storage`` is here for the same reason the three domains are: what a
 #: row means must not depend on the shape of the request that wrote it.
-_DOMAINS: Final = ("relays", "sensors", "automation", "storage")
+_DOMAINS: Final = ("relays", "sensors", "automation", "storage", "accounts")
 
 #: Everything that would make a domain package depend on being served over HTTP.
 _WEB_FRAMEWORKS: Final = ("fastapi", "starlette", "uvicorn", "pihome_hub.api")
@@ -32,6 +32,9 @@ _ALLOWED_DOMAIN_IMPORTS: Final = {
     # Storage knows about rows, not about relays. Which table a domain keeps its
     # state in is that domain's business, and the dependency points that way.
     "storage": frozenset(),
+    # Who may log in is not a statement about any particular relay or sensor. If
+    # this ever needs one of them, the rule to add is a role, not an import.
+    "accounts": frozenset(),
 }
 
 
