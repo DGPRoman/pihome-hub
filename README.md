@@ -107,6 +107,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
 | `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
 | `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
+| `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
 | `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
 

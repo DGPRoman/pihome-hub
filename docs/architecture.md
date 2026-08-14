@@ -74,6 +74,14 @@ can reach the code that closes a circuit.
 | --- | --- | --- | --- |
 | `PIHOME_*` environment / `.env` | secrets and process settings: keys, bind address, log level, which backend | `config.py`, as pydantic-settings | flat, one process |
 | YAML files | the house: relay wiring, sensor devices, automation rules | a `config.py` in each of the three domain packages | nested, per installation |
+| SQLite | accounts, and what the service itself writes | `storage/` | rows, mutable at runtime |
+
+The third is the only one the service writes to, and the only one an operator does not
+edit by hand. It also decides where: `ProtectSystem=strict` leaves the filesystem
+read-only, so the unit declares `StateDirectory=pihome-hub` and systemd creates
+`/var/lib/pihome-hub` owned by the service account at mode `0700`. The database path
+defaults to the `STATE_DIRECTORY` systemd exports from that declaration, so the unit
+stays the one place the location is written down.
 
 The split is not stylistic. A relay's pin, polarity and startup behaviour describe a
 building and belong in a file that gets edited when someone rewires something; a bind
@@ -97,12 +105,21 @@ Both are fully validated before the port is bound — see below.
    `automation.yaml` and builds an engine, purely to prove every rule names something
    real. The engine is discarded; the lifespan builds the one the service runs on, inside
    the loop that owns its timers.
-4. **`uvicorn.run(create_app(...))`** — the port is bound only now. Everything above has
+4. **`prepare_database(settings.database_path)`** — opens SQLite and applies any
+   migration the file has not seen. A state directory the service cannot write to, or a
+   schema written by a newer build, stops here.
+5. **`uvicorn.run(create_app(...))`** — the port is bound only now. Everything above has
    already been read from disk, so a misconfiguration cannot surface as a traceback from
    inside a running event loop.
 
-Exit code 2 means "everything above step 4 failed", and the unit refuses to restart on
+Exit code 2 means "everything above step 5 failed", and the unit refuses to restart on
 it. Anything the process cannot foresee — a bound port — exits 3, which is retried.
+
+One subtlety worth knowing if you touch step 4: `sqlite3.connect()` opens nothing. It
+returns a handle and defers the real work, so a directory the service cannot write to
+raises on the *first statement*, not on the call. The pragmas therefore run inside the
+same block that translates errors — outside it, that arrived as a raw `OperationalError`
+and an exit code the unit retries forever.
 
 ## Ownership, and who closes what
 
@@ -187,13 +204,12 @@ anonymous?", so it cannot be used to widen a scope.
 
 ## What is deliberately absent
 
-- **No database.** Sensor readings are the latest per device, in memory. A restart forgets
-  them, and every device is reported as never-having-reported until it pushes again —
-  which is a truthful thing to say rather than a gap.
-- **No history.** Trends need storage, retention and a migration story; none of that
-  earns its place on a Pi Zero for switching yard lights.
-- **No users, roles or sessions.** Two static keys. This is the honest limit that blocks
-  the web client's own roadmap, and the next real piece of work here.
+- **No readings in the database.** There is a SQLite file now, and it holds accounts and
+  nothing else. Sensor readings stay the latest per device, in memory: a restart forgets
+  them and every device reports as never-having-reported until it pushes again, which is
+  a truthful thing to say rather than a gap.
+- **No history.** Trends need retention and a pruning story on a card with finite write
+  cycles; that does not earn its place for switching yard lights.
 - **No pin read-back.** See "Reading relay state" above.
 - **No `X-Forwarded-For`, no TLS, no LAN bind by default.** Reaching the service from
   elsewhere is a VPN or a reverse proxy's job — see [SECURITY.md](../SECURITY.md).

@@ -1,8 +1,9 @@
 # Moving to another Pi
 
-A working installation is four files in `/etc/pihome-hub` and nothing else. The checkout,
-the virtualenv and the unit are all rebuilt by [`deploy/install.sh`](../deploy/install.sh)
-on the new host, so nothing about them needs to survive the move.
+A working installation is a handful of files in `/etc/pihome-hub`, plus the database in
+`/var/lib/pihome-hub`. The checkout, the virtualenv and the unit are all rebuilt by
+[`deploy/install.sh`](../deploy/install.sh) on the new host, so nothing about them needs
+to survive the move.
 
 ## What moves, and what must not
 
@@ -12,6 +13,7 @@ on the new host, so nothing about them needs to survive the move.
 | `/etc/pihome-hub/relays.yaml` | yes | The wiring. This describes the house, not the Pi |
 | `/etc/pihome-hub/sensors.yaml` | yes, **if you have one** | See the warning below |
 | `/etc/pihome-hub/automation.yaml` | yes, **if you have one** | Same |
+| `/var/lib/pihome-hub/hub.db` | yes, once there are accounts | Users and their password hashes. Leaving it behind means every account has to be created again on the new Pi |
 | `/opt/pihome-hub` | no | `git clone` it again |
 | `/opt/pihome-hub/.venv` | **never** | A virtualenv hard-codes its own path and links against the Python that built it. Copying one between hosts is how you get an interpreter that half-works |
 | `/etc/systemd/system/pihome-hub.service` | no | The installer writes it from the repository, so it can never lag behind the code |
@@ -54,7 +56,12 @@ simply fails to claim them.
 ```bash
 sudo systemctl stop pihome-hub
 sudo tar -czf ~/pihome-config.tar.gz -C /etc pihome-hub
+sudo tar -czf ~/pihome-state.tar.gz -C /var/lib pihome-hub   # once there are accounts
 ```
+
+Stopping first is not only about the relays: SQLite in WAL mode keeps `hub.db-wal`
+alongside the database, and copying the pair from a running service can capture a
+half-written transaction. A stopped service has checkpointed and removed it.
 
 Copy it across, then on the **new** Pi:
 
@@ -63,8 +70,13 @@ sudo apt install -y git python3-venv
 sudo git clone https://github.com/DGPRoman/pihome-hub.git /opt/pihome-hub
 
 sudo tar -xzf pihome-config.tar.gz -C /etc
+sudo tar -xzf pihome-state.tar.gz -C /var/lib     # if you took one
 sudo /opt/pihome-hub/deploy/install.sh
 ```
+
+If you restored a database, `chown -R pihome: /var/lib/pihome-hub` afterwards — systemd
+creates that directory for the service account, and a file unpacked as `root` inside it
+is one the service cannot write.
 
 The archive carries its own ownership and modes, and the installer repairs the directory
 anyway, so `/etc/pihome-hub` ends up `750 root:pihome` with `hub.env` at `600 root:root`
@@ -131,6 +143,7 @@ firmware and is hardest to account for.
 ```bash
 sudo systemctl disable --now pihome-hub
 sudo rm /etc/pihome-hub/hub.env
+sudo rm -rf /var/lib/pihome-hub          # password hashes
 ```
 
 Disabling matters as much as stopping: a Pi that is plugged back in later, for any reason,

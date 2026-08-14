@@ -57,6 +57,8 @@ Match the line, not the exit code — they all exit 2.
 | `automation rule 'r1' targets relay 'gate-light', which is not configured` | Same, for the relay side | As above |
 | `automation rule 'r1' uses only_after_dark but no location is set` | Darkness needs coordinates | Add a `location` block to `automation.yaml` |
 | `PIHOME_GPIO_BACKEND=gpiozero was requested but gpiozero is not importable` | The hardware extra is not installed | `pip install '.[rpi]'` inside `/opt/pihome-hub/.venv` |
+| `could not open the database at …: attempt to write a readonly database` | The state directory is not writable by the service account | `systemctl show -p StateDirectory pihome-hub`, then check `/var/lib/pihome-hub` is owned by `pihome`. Re-running the installer repairs it |
+| `the database is at schema version 3, but this build only knows version 1` | The file was written by a newer pihome-hub — usually a downgrade, or a database restored from a Pi running a later version | Upgrade the code rather than downgrade the data: `git -C /opt/pihome-hub pull` and re-run the installer |
 
 An empty relay list is **not** an error: a hub with `relays: []` starts and serves an
 empty collection. That is a configured hub with nothing wired, which is different from a
