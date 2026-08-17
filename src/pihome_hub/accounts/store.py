@@ -8,8 +8,7 @@ work in a threadpool and a SQLite connection is not safe across threads.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,7 +24,7 @@ from pihome_hub.accounts.passwords import (
     needs_rehash,
     verify_password,
 )
-from pihome_hub.storage import connect
+from pihome_hub.storage import connect, writing
 
 
 def _utc_now() -> datetime:
@@ -97,7 +96,7 @@ class UserStore:
             # moment a stronger hash can be computed without asking anyone. A write
             # failure here is not swallowed: it means the state directory has gone
             # read-only, which is worth hearing about now rather than later.
-            with self._writing() as connection:
+            with writing(self._path) as connection:
                 connection.execute(
                     "UPDATE users SET password_hash = ? WHERE id = ?",
                     (hash_password(password), row["id"]),
@@ -116,7 +115,7 @@ class UserStore:
         password_hash = hash_password(password)
         created_at = self._clock()
 
-        with self._writing() as connection:
+        with writing(self._path) as connection:
             # Checked rather than caught: the write lock is already held, so this
             # cannot race, and an IntegrityError from anywhere else stays reported as
             # what it is instead of being blamed on a duplicate name.
@@ -135,14 +134,14 @@ class UserStore:
         """Replace an account's password."""
         password_hash = hash_password(password)
 
-        with self._writing() as connection:
+        with writing(self._path) as connection:
             user = _require(connection, username)
             connection.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user.id)
             )
 
     def set_role(self, username: str, role: Role) -> User:
-        with self._writing() as connection:
+        with writing(self._path) as connection:
             user = _require(connection, username)
             if role is not Role.ADMIN:
                 _refuse_if_last_admin(connection, user)
@@ -151,7 +150,7 @@ class UserStore:
 
     def set_disabled(self, username: str, disabled: bool) -> User:
         """Disable or re-enable an account, keeping its password and its history."""
-        with self._writing() as connection:
+        with writing(self._path) as connection:
             user = _require(connection, username)
             if disabled:
                 _refuse_if_last_admin(connection, user)
@@ -161,32 +160,10 @@ class UserStore:
             return _reload(connection, user.id)
 
     def delete(self, username: str) -> None:
-        with self._writing() as connection:
+        with writing(self._path) as connection:
             user = _require(connection, username)
             _refuse_if_last_admin(connection, user)
             connection.execute("DELETE FROM users WHERE id = ?", (user.id,))
-
-    # -- Transactions --------------------------------------------------------
-
-    @contextmanager
-    def _writing(self) -> Iterator[sqlite3.Connection]:
-        """A connection whose transaction has already taken the write lock.
-
-        ``BEGIN IMMEDIATE`` rather than the deferred transaction sqlite3 starts at
-        the first write. Every guard below reads a count and then writes based on
-        what it read, and a deferred transaction takes the lock only at the write —
-        by which point two callers can both have seen "there are two admins" and
-        each removed a different one.
-        """
-        with connect(self._path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield connection
-            except BaseException:
-                connection.rollback()
-                raise
-            else:
-                connection.commit()
 
 
 def _refuse_if_last_admin(connection: sqlite3.Connection, user: User) -> None:

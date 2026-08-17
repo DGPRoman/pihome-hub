@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pihome_hub.storage.database import connect, prepare_database
+from pihome_hub.storage.database import connect, prepare_database, writing
 from pihome_hub.storage.errors import (
     DatabaseUnavailableError,
     SchemaTooNewError,
@@ -19,4 +19,5 @@ __all__ = [
     "current_version",
     "migrate",
     "prepare_database",
+    "writing",
 ]

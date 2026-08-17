@@ -235,6 +235,46 @@ on what it read; deferred, the write lock is taken only at the write, by which p
 callers can both have seen "there are two admins" and each removed a different one.
 `tests/accounts/test_store.py` runs exactly that race.
 
+## Sessions
+
+A session is a token in a cookie and a row in `sessions`. The row holds the token's
+SHA-256, never the token — a stolen database therefore yields verifiers, not
+credentials, and the value a lookup compares is already public if the file is lost.
+
+SHA-256 rather than the scrypt one table over, and the difference is the input. A
+password is chosen by a person, so it is guessable and hashing it has to be slow on
+purpose. A token is 256 bits out of `secrets`, so there is nothing to guess — and a
+slow hash would spend 16 MiB and a few hundred milliseconds on *every* authenticated
+request rather than once per login.
+
+**Expiry is absolute, not sliding.** A session ends 30 days after it was opened,
+however recently it was used. Sliding expiry is friendlier, and it costs a database
+write on every authenticated request; on a card with finite write cycles that is the
+wrong trade for saving someone one login a month. Nothing on the read path writes,
+and a test asserts that by refusing the write transaction rather than by watching the
+file — in WAL mode a write lands in `hub.db-wal` and the database's own mtime does
+not move, so watching it would pass with a write added.
+
+Expired rows are swept when a session is opened. That is already a write, it is rare,
+and it bounds the table without a timer that some component has to own.
+
+Resolving a session re-reads the account rather than trusting what was true at login,
+which decides three behaviours for free:
+
+| Change to an account | Effect on its live sessions |
+| --- | --- |
+| Disabled | They stop working at once, and work again if it is re-enabled |
+| Role changed | The new role applies to the next request |
+| Deleted | The rows go with it — `ON DELETE CASCADE`, which is a rule only because `src/pihome_hub/storage/database.py` switches foreign keys on for every connection |
+
+A password change is the one that does *not* follow, because the row a session points
+at has not changed. `pihome-hub-admin passwd` therefore ends that account's sessions
+explicitly and says how many it closed.
+
+One thing worth knowing if you add a query here: these timestamps are compared as
+text by SQLite, and text order matches time order only while every row carries the
+same UTC offset. `_timestamp()` converts before writing for that reason.
+
 ## How a password is stored
 
 Not a key this time but something a person chooses, which changes the requirements:

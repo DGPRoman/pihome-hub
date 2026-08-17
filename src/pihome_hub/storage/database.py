@@ -51,6 +51,30 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+@contextmanager
+def writing(path: Path) -> Iterator[sqlite3.Connection]:
+    """A connection whose transaction has already taken the write lock.
+
+    ``BEGIN IMMEDIATE`` rather than the deferred transaction sqlite3 begins at the
+    first write. A caller that reads a count and then writes based on what it read
+    needs those to be one indivisible step, and a deferred transaction takes the
+    lock only at the write — by which point two callers can both have seen the same
+    count and each acted on it.
+
+    Here rather than in each store because a transaction protocol kept in two places
+    is one that ends up meaning two things.
+    """
+    with connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield connection
+        except BaseException:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
+
+
 def _configure(connection: sqlite3.Connection) -> None:
     connection.row_factory = sqlite3.Row
     # WAL so a read never blocks behind a write. The default rollback journal takes
