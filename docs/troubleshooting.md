@@ -149,6 +149,20 @@ So a phone retrying a stale key locks out relay reads while sensors keep reporti
 normally. Wait out `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` (300 by default) or restart the
 service — the counters are in memory.
 
+## Logging in does not work
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `401 {"detail":"Invalid username or password"}` | One answer for a wrong password, an account that does not exist, and one that is disabled — the endpoint does not say which | `sudo -u pihome pihome-hub-admin list` shows what exists and whether it is enabled |
+| `429 {"detail":"Too many failed authentication attempts"}` | More than `PIHOME_AUTH_MAX_FAILURES` failures from this client inside the window | Wait out `PIHOME_AUTH_FAILURE_WINDOW_SECONDS`, or restart — the counters are in memory |
+| `401 {"detail":"Not authenticated"}` on `GET /v1/session` | No cookie, an expired one, one that was never issued, or an account disabled since login | Log in again. Session state is re-read per request, so a disabled account stops working at once |
+| Login returns `201` and every request after it is anonymous | `PIHOME_SESSION_COOKIE_SECURE=true` with no TLS in front. The browser accepts the cookie and then never sends it back over plain HTTP | Set it `false`, or put a TLS proxy in front |
+| `500` and `no such table: users` in the journal | The database exists but its schema was never applied | The service applies it at startup, so this means something else created the file. `systemctl restart pihome-hub` |
+| The web client logs in but the session does not stick | The client is not sending cookies — `fetch` omits them unless `credentials: 'include'` (or `'same-origin'` through a dev proxy) | Set it in the client |
+
+An account can be created only at a terminal on the Pi; there is no HTTP route for it.
+See the [`pihome-hub-admin` section above](#pihome-hub-admin-refuses) if that is failing.
+
 ## A sensor reads wrong
 
 Never reported, stale, and reporting nothing are three different states, and the API keeps

@@ -109,6 +109,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
 | `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days), from when it happened rather than from the last request |
+| `PIHOME_SESSION_COOKIE_SECURE` | `false` | `Secure` on the session cookie. Only true behind a TLS proxy — over plain HTTP the browser would never send it |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
 | `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
 
@@ -172,12 +173,16 @@ work.
 
 ## API
 
-Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
-`PUT`; `toggle` is a `POST`, since replaying it does not produce the same result twice.
+Everything under `/v1` requires an `X-API-Key` header, except the login route — which is
+what makes it the way in. Idempotent operations use `PUT`; `toggle` is a `POST`, since
+replaying it does not produce the same result twice.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness. The only unauthenticated endpoint |
+| `GET` | `/health` | Liveness. Unauthenticated |
+| `POST` | `/v1/session` | Log in — body `{"username": …, "password": …}`. Sets the session cookie |
+| `GET` | `/v1/session` | Who the cookie says you are. `401` if it says nothing usable |
+| `DELETE` | `/v1/session` | Log out. `204` either way |
 | `GET` | `/v1/relays` | Every relay and its state |
 | `PUT` | `/v1/relays` | Set every relay to the same state — body `{"on": true}` |
 | `POST` | `/v1/relays/toggle` | Invert every relay independently |
@@ -199,6 +204,35 @@ $ curl -X POST -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays/porch-light/
 
 Bodies are validated strictly: `{"on": "yes"}` is a `422`, not a guess. An unknown
 relay id is a `404`, a bad or missing key is a `401`, and repeated failures earn a `429`.
+
+### Logging in
+
+```console
+$ curl -c jar -X POST -H 'Content-Type: application/json' \
+       -d '{"username":"roman","password":"…"}' http://127.0.0.1:5002/v1/session
+{"username":"roman","role":"admin","expires_at":"2026-09-16T07:24:26.297982Z"}
+
+$ curl -b jar http://127.0.0.1:5002/v1/session
+{"username":"roman","role":"admin","expires_at":"2026-09-16T07:24:26.297982Z"}
+
+$ curl -b jar -X DELETE http://127.0.0.1:5002/v1/session    # 204, cookie cleared
+```
+
+The token is in the cookie and nowhere else — not the body, not a header. The cookie is
+`HttpOnly`, so a cross-site scripting bug in a web client cannot read a credential that
+outlives the page, and `SameSite=Strict`, which is the whole of the cross-site request
+forgery defence; see [SECURITY.md](SECURITY.md).
+
+Every kind of wrong answers the same `401` with the same wording: no such account, wrong
+password, and disabled account are not distinguished, because which one it was is not the
+caller's to learn. Failed attempts are counted in their own bucket, so somebody guessing
+at the login form cannot lock out the firmware.
+
+**Sessions do not yet grant anything but `/v1/session`.** The relay and sensor routes still
+require their API key. Accepting a session on them, with the roles it carries, is the next
+piece of work.
+
+### The two keys
 
 The two keys divide along a real boundary rather than a decorative one. Firmware pushes
 readings and can do nothing else — it cannot read the state of the house, and it cannot

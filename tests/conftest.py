@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from pihome_hub.app import create_app
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.relays import MockRelayBackend, RelayConfig, RelayService
+from pihome_hub.storage import prepare_database
 
 #: Long enough to pass validation, and obviously synthetic.
 VALID_KEY = "7f3a91c4e8b2d65097143bce8a2f5d0b6c47e19238af5d6c"
@@ -94,6 +95,9 @@ def relay_service(relay_backend: MockRelayBackend) -> RelayService:
 
 @pytest.fixture
 def app(settings: Settings, relay_service: RelayService) -> FastAPI:
+    # The schema is created here for the same reason __main__ creates it before
+    # uvicorn starts: create_app() touches no files, so something has to.
+    prepare_database(settings.database_path)
     return create_app(settings, relay_service=relay_service)
 
 

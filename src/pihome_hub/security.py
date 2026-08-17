@@ -1,8 +1,13 @@
-"""API-key authentication.
+"""Authentication: two API keys, and a session cookie.
 
-Two independent keys, each covering a distinct role: relay control and sensor
-ingestion. Keeping them separate means a key recovered from sensor firmware
-cannot be replayed to switch relays.
+The keys cover distinct roles — relay control and sensor ingestion — and keeping
+them separate means a key recovered from sensor firmware cannot be replayed to
+switch relays. They are for firmware and scripts: a device that is provisioned once
+and then left alone has nobody to type a password.
+
+Sessions are for people. A browser holds an opaque token in an HttpOnly cookie and
+the account behind it is re-read on every request, so a role change or a disabled
+account takes effect at once rather than whenever the session runs out.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from pihome_hub.accounts import Session, SessionStore
 from pihome_hub.config import Settings
 from pihome_hub.ratelimit import FailureLimiter
 
@@ -28,6 +34,15 @@ _UNAUTHORIZED_DETAIL = "Invalid or missing API key"
 
 #: Source label used when a request arrives with no identifiable peer address.
 _UNKNOWN_CLIENT = "unknown"
+
+#: Name of the session cookie. Prefixed so it cannot collide with a cookie set by
+#: something else served from the same host.
+SESSION_COOKIE = "pihome_session"
+
+#: Returned when a request carries no usable session. One answer for absent, expired,
+#: unknown, and belonging-to-a-disabled-account, because the difference is not the
+#: caller's to learn.
+_NO_SESSION_DETAIL = "Not authenticated"
 
 
 class Scope(StrEnum):
@@ -185,3 +200,66 @@ def require_sensor_key(
 
 RelayKeyRequired = Depends(require_relay_key)
 SensorKeyRequired = Depends(require_sensor_key)
+
+
+def current_session(request: Request) -> Session | None:
+    """The session this request carries, if it carries a usable one.
+
+    Never raises, so a route can offer more to a caller who is logged in without
+    refusing one who is not.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+
+    sessions: SessionStore = request.app.state.sessions
+    return sessions.resolve(token)
+
+
+def require_session(request: Request) -> Session:
+    """Dependency for a route that needs to know who is asking.
+
+    No ``WWW-Authenticate`` header. There is no registered scheme for cookies, and
+    inventing one would only prompt some clients to show a basic-auth dialog that
+    cannot possibly work here.
+    """
+    session = current_session(request)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_NO_SESSION_DETAIL,
+        )
+    return session
+
+
+SessionRequired = Depends(require_session)
+
+
+def login_bucket(request: Request) -> str:
+    """Rate-limit bucket for password attempts.
+
+    Its own bucket, so that guessing passwords cannot exhaust the allowance
+    protecting the relay key, or be hidden behind one that a working device keeps
+    clearing.
+
+    Keyed on the peer rather than on the username offered, deliberately: per-username
+    counting lets anybody who knows a name lock its owner out by guessing at it, which
+    trades an online-guessing defence for a denial of service against a real account.
+    """
+    return f"login:{client_key(request)}"
+
+
+def guard_login_attempt(request: Request) -> None:
+    """Refuse a password attempt from a peer that has had too many go wrong."""
+    limiter: FailureLimiter = request.app.state.auth_limiter
+    bucket = login_bucket(request)
+
+    if limiter.is_blocked(bucket):
+        logger.warning(
+            "login rejected: too many recent failures",
+            extra={"client": bucket, "path": request.url.path},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed authentication attempts",
+        )

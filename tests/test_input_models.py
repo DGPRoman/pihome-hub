@@ -26,6 +26,7 @@ _OUTPUT_ONLY: Final = {
     "RelayCollection",
     "RelayState",
     "SensorCollection",
+    "SessionResponse",
 }
 
 #: ``Settings`` reads the environment, where the same argument applies — a misspelled

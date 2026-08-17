@@ -275,6 +275,27 @@ One thing worth knowing if you add a query here: these timestamps are compared a
 text by SQLite, and text order matches time order only while every row carries the
 same UTC offset. `_timestamp()` converts before writing for that reason.
 
+### The routes, and the one exemption they needed
+
+`POST /v1/session` is the only path under `/v1` that takes no credential — requiring
+one of the way in would leave the door reachable only by callers already through it.
+Two things follow from that, and neither is obvious.
+
+The route-coverage guard in `tests/test_security.py` asserts every `/v1` route refuses
+an anonymous caller. It now carries a mapping of exemptions to the reason each is
+allowed, checked against the routes that exist so one cannot go stale. There are two:
+the login route, and `DELETE` on the same path. The second is worth spelling out — the
+cookie is `HttpOnly`, so the server is the only thing that can clear it, and answering
+`401` to an expired session would strand it in the browser until its max-age ran out.
+It reads nothing and, with no cookie to act on, changes nothing.
+
+The `RequestValidationError` handler is the other. It answers `401` before `422` for
+anything under `/v1`, because a malformed body would otherwise be a route-existence
+oracle. Applied to the login route that would demand an API key to explain a typo in a
+login form, so the login path is exempt by exact match. Exact, not by prefix — widening
+it to one fails a test in `tests/test_api_session.py`, because a prefix would exempt
+every route under `/v1` from the check that closed the oracle.
+
 ## How a password is stored
 
 Not a key this time but something a person chooses, which changes the requirements:
