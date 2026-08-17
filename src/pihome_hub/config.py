@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     #: come to disagree.
     session_lifetime_seconds: Annotated[int, Field(gt=0)] = DEFAULT_SESSION_LIFETIME_SECONDS
 
+    #: ``Secure`` on the session cookie. False by default, and that is not an
+    #: oversight: this service speaks plain HTTP, and a Secure cookie is one the
+    #: browser will not send over it — logging in would appear to work and every
+    #: request after it would be anonymous. Set it true behind a TLS proxy, which is
+    #: the only arrangement where it is both correct and possible.
+    session_cookie_secure: bool = False
+
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window
     #: before further attempts are refused with 429.

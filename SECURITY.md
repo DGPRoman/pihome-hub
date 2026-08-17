@@ -24,6 +24,10 @@ project with no commercial support and no bug bounty.
 | Online key guessing | Failed attempts are counted per client and per scope over a sliding window; exhausting the allowance returns `429`. See the limits of this below |
 | Route map disclosure through the docs | `/docs` and `/openapi.json` carry no credential, so enabling them is refused unless the service is bound to loopback |
 | Probing for which endpoint exists | A missing key and a wrong key return an identical `401` body, and no error echoes either the supplied or the expected key |
+| A session token readable by JavaScript | The cookie is `HttpOnly`, so a cross-site scripting bug in a web client cannot read a credential that outlives the page |
+| A session token in a log or a body | The token appears only in `Set-Cookie` — not in the response body, not in another header, never in a URL |
+| Online password guessing | Login failures are counted per peer in their own bucket, so guessing cannot exhaust the allowance protecting the relay key, and the answer to every wrong credential is the same `401` |
+| Username enumeration by timing the login | A request naming no account still pays for a password hash, so "no such account" and "wrong password" take the same time |
 | Session replay from a stolen database | Only the SHA-256 of each token is stored, so the rows cannot be presented as cookies |
 | A session outliving the account behind it | Resolving one re-reads the account, so disabling, demoting or deleting takes effect on the next request rather than at expiry |
 | A changed password leaving old logins alive | `pihome-hub-admin passwd` ends that account's sessions and reports how many |
@@ -62,10 +66,23 @@ project with no commercial support and no bug bounty.
   a deliberate compromise for a board with 512 MB of RAM, not the strongest setting
   available. A weak password in a stolen database is still a weak password; the 12-
   character minimum is a floor, not a guarantee.
-- **Nothing reaches accounts or sessions over HTTP yet.** Both are stored, and both can
-  be managed locally; the endpoints that would issue and accept a session, and the role
-  checks on routes, are still to come. Until then the two API keys are the whole of the
-  access control, and a role recorded against an account restricts nothing.
+- **Cross-site request forgery rests on `SameSite=Strict` alone.** There is no CSRF
+  token. Strict keeps the cookie off any request another site initiated, including a
+  top-level navigation, which is the defence — and it is a defence the *browser*
+  provides, so a client that does not implement `SameSite` does not get it. Today the
+  exposure is nil either way: the only cookie-authenticated routes are `GET` and
+  `DELETE` on `/v1/session`, one of which reads and the other of which can only log you
+  out. That changes the moment a session is accepted on a route that switches a relay,
+  and a CSRF token belongs in the same change rather than after it.
+- **A role restricts nothing yet.** A session says who is asking; the relay and sensor
+  routes still ask only for an API key, so `viewer` and `admin` can do exactly as much
+  as each other over HTTP. Role enforcement is the next piece of work.
+- **`Secure` is off by default, and has to be.** The service speaks plain HTTP, and a
+  `Secure` cookie is one a browser will not send over it — login would appear to work
+  and every request after it would be anonymous. Behind a TLS proxy, set
+  `PIHOME_SESSION_COOKIE_SECURE=true`. Without one, the session cookie travels in clear
+  text exactly as the API key does, which is the same reason not to expose this service
+  directly to the internet.
 - **A session cannot be revoked from another device.** `pihome-hub-admin` on the Pi can
   end them — by changing the password, or by disabling the account — but there is no
   "sign out everywhere" for someone holding only a phone.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,10 +14,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pihome_hub import __version__
+from pihome_hub.accounts import SessionStore, UserStore
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
+from pihome_hub.api.v1.session import router as session_router
 from pihome_hub.automation import AutomationEngine, SunClock, load_automation
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.logging import configure_logging
@@ -27,6 +30,10 @@ from pihome_hub.security import authenticate_any_scope
 from pihome_hub.sensors import SensorStore, UnknownDeviceError, load_sensors
 
 logger = logging.getLogger(__name__)
+
+#: Exempt from the validation handler below. Kept beside the handler that needs it
+#: rather than imported from the router, so the reason travels with the exception.
+LOGIN_PATH = "/v1/session"
 
 _DESCRIPTION = """\
 HTTP control plane for a Raspberry Pi wired to relay-switched circuits.
@@ -142,7 +149,12 @@ async def _validation_handler(request: Request, exc: Exception) -> JSONResponse:
     Authentication is therefore re-checked at this boundary, and a failure is recorded
     so probing costs the same as any other failed attempt.
     """
-    if not request.url.path.startswith("/v1"):
+    if not request.url.path.startswith("/v1") or request.url.path == LOGIN_PATH:
+        # The login route is exempt because it is the one path under /v1 that takes no
+        # credential: demanding a key to explain a malformed login body would make the
+        # way in reachable only by callers who already have another way in. It leaks
+        # nothing the oracle above was about — that was discovering *which* paths
+        # exist, and this one is documented.
         return await request_validation_exception_handler(
             request, cast(RequestValidationError, exc)
         )
@@ -197,6 +209,14 @@ def create_app(
         max_failures=resolved.auth_max_failures,
         window_seconds=resolved.auth_failure_window_seconds,
     )
+    # Accounts and sessions are rows in a file this does not create: __main__ calls
+    # prepare_database() before the server starts, so a state directory it cannot
+    # write is reported there rather than at whichever request needed an account.
+    app.state.users = UserStore(resolved.database_path)
+    app.state.sessions = SessionStore(
+        resolved.database_path,
+        lifetime=timedelta(seconds=resolved.session_lifetime_seconds),
+    )
     if relay_service is not None:
         app.state.relays = relay_service
 
@@ -204,6 +224,7 @@ def create_app(
     app.add_exception_handler(UnknownDeviceError, _not_found_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.include_router(system_router)
+    app.include_router(session_router)
     app.include_router(relays_router)
     app.include_router(read_router)
     app.include_router(ingest_router)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from http import HTTPStatus
+from typing import Final
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,22 @@ from fastapi.testclient import TestClient
 from pihome_hub.app import create_app
 from pihome_hub.relays import RelayService
 from tests.conftest import RELAY_HEADERS, SENSOR_HEADERS, VALID_KEY, build_settings
+
+#: Routes under /v1 that deliberately take no credential, each with the reason it is
+#: allowed to. Written as a mapping so a hole cannot be punched without stating why,
+#: and checked below against the routes that actually exist so one cannot go stale.
+_ANONYMOUS_BY_DESIGN: Final = {
+    ("POST", "/v1/session"): (
+        "the way in. Requiring a credential of it would leave the door reachable only "
+        "by callers who already have another way through"
+    ),
+    ("DELETE", "/v1/session"): (
+        "logging out clears an HttpOnly cookie, and the server is the only thing that "
+        "can clear one. Answering 401 to an expired session would strand it in the "
+        "browser until its max-age ran out. It reads nothing and, with no cookie to "
+        "act on, changes nothing"
+    ),
+}
 
 
 class TestKeyRequired:
@@ -33,8 +50,17 @@ class TestKeyRequired:
 
         A new ``/v1`` route added without the auth dependency fails here, which a
         hardcoded list of requests would never have noticed.
+
+        One exemption: ``POST /v1/session`` is the way in, so requiring a credential
+        of it would leave the door reachable only by callers already through it. It is
+        named here rather than pattern-matched, so a second anonymous route is a
+        decision somebody has to write down.
         """
-        versioned = [(m, p) for m, p in registered_routes if p.startswith("/v1")]
+        versioned = [
+            (m, p)
+            for m, p in registered_routes
+            if p.startswith("/v1") and (m, p) not in _ANONYMOUS_BY_DESIGN
+        ]
         assert versioned, "no /v1 routes found to check"
 
         unguarded = []
@@ -49,6 +75,19 @@ class TestKeyRequired:
                 unguarded.append(f"{method} {path} -> {response.status_code}")
 
         assert not unguarded, f"reachable without a key: {unguarded}"
+
+    def test_every_exemption_is_still_a_route(
+        self, registered_routes: list[tuple[str, str]]
+    ) -> None:
+        """A renamed or deleted route must not leave an unexplained hole in the sweep."""
+        assert set(_ANONYMOUS_BY_DESIGN) <= set(registered_routes)
+
+    def test_logging_out_without_a_session_changes_nothing(self, client: TestClient) -> None:
+        """What makes the second exemption safe rather than merely convenient."""
+        response = client.delete("/v1/session")
+
+        assert response.status_code == HTTPStatus.NO_CONTENT
+        assert not response.content
 
     def test_a_rejected_request_does_not_touch_the_hardware(
         self, client: TestClient, relay_service: RelayService
