@@ -57,6 +57,7 @@ dev = [
 
 [project.scripts]
 pihome-hub = "pihome_hub.__main__:main"
+pihome-hub-admin = "pihome_hub.admin:main"
 
 [project.urls]
 Homepage = "https://github.com/DGPRoman/pihome-hub"

@@ -111,13 +111,17 @@ systemctl status pihome-hub
 journalctl -u pihome-hub -n 20 --no-pager | grep starting
 curl -s http://127.0.0.1:5002/health
 curl -s -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
+sudo -u pihome pihome-hub-admin list
 ```
 
-Three things to confirm, in order of how easy they are to miss:
+Four things to confirm, in order of how easy they are to miss:
 
 1. `relays=`, `sensors=` and `automation_rules=` in the startup line match the old Pi.
 2. `backend='gpiozero'`, not `mock`.
-3. A relay you can see actually moves — the one check that exercises the wiring rather
+3. Every account is listed. An empty list after a move that was supposed to carry
+   `hub.db` means the archive was not unpacked, or was unpacked as the wrong user —
+   `pihome-hub-admin` says which if it is the second.
+4. A relay you can see actually moves — the one check that exercises the wiring rather
    than the configuration describing it.
 
 Anything unexpected: [troubleshooting](./troubleshooting.md).

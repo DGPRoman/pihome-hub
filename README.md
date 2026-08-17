@@ -115,6 +115,52 @@ Relay wiring lives in its own file, because it describes a house rather than a
 process. Copy [`config/relays.example.yaml`](config/relays.example.yaml) to
 `config/relays.yaml` — the real file is git-ignored.
 
+## Accounts
+
+Accounts live in the SQLite file the unit's `StateDirectory=` decides, and are managed
+with `pihome-hub-admin` rather than over HTTP — the first admin cannot be created through
+an API that requires an admin.
+
+```bash
+pihome-hub-admin create roman --role admin   # prompts for the password, twice
+pihome-hub-admin list
+pihome-hub-admin passwd roman
+pihome-hub-admin role anna operator
+pihome-hub-admin disable guest               # keeps the password; enable restores access
+pihome-hub-admin delete guest
+```
+
+| Role | May |
+| --- | --- |
+| `admin` | everything, including creating and removing accounts |
+| `operator` | switch relays and read everything — the everyday account |
+| `viewer` | read only: sees what the house is doing, changes nothing |
+
+On a Pi the database belongs to the service account, so run the tool as that account:
+
+```bash
+sudo -u pihome pihome-hub-admin list
+```
+
+As root it would leave behind a root-owned database that the service cannot write, and
+systemd does not repair that — so it refuses, and names the account to use instead.
+
+Three things it will not do. It will not take a password as an argument: a command line is
+visible in `ps` to every account on the machine and lands in shell history. Passwords are
+read from the terminal, or from stdin when there is no terminal, which is what a
+provisioning script wants:
+
+```bash
+echo "$PASSWORD" | pihome-hub-admin create anna --role operator
+```
+
+It will not accept a password under 12 characters. And it will not delete, disable or
+demote the last enabled admin — none of the three is undoable through any interface this
+service offers, and the fix would be editing SQLite by hand over SSH.
+
+**Nothing logs in yet.** Accounts are stored and can be listed; the session endpoints that
+would use them are the next piece of work.
+
 ## API
 
 Everything under `/v1` requires an `X-API-Key` header. Idempotent operations use
@@ -259,19 +305,24 @@ open port.
 ```
 src/pihome_hub/
 ├── __main__.py        entry point the systemd unit runs
+├── admin.py           pihome-hub-admin — account management at a terminal
 ├── app.py             ASGI application factory
 ├── config.py          settings and validation
+├── security.py        API-key authentication, two scopes
+├── ratelimit.py       failure counting behind the 429
 ├── logging.py         stdout logging, text or JSON
 ├── api/
 │   ├── system.py      /health — unversioned, unauthenticated
-│   └── v1/            relay and sensor routes (authenticated)
-└── relays/
-    ├── backend.py     RelayBackend protocol — the hardware seam
-    ├── mock.py        in-memory backend for development, tests and CI
-    ├── gpio.py        real backend via gpiozero (needs the 'rpi' extra)
-    ├── models.py      RelayConfig: pin, polarity, startup behaviour
-    ├── config.py      loads config/relays.yaml
-    └── service.py     logical on/off/toggle over configured relays
+│   └── v1/            relay, sensor and automation routes (authenticated)
+├── relays/
+│   ├── backend.py     RelayBackend protocol — the hardware seam
+│   ├── mock.py        in-memory backend for development, tests and CI
+│   ├── gpio.py        real backend via gpiozero (needs the 'rpi' extra)
+│   └── service.py     logical on/off/toggle over configured relays
+├── sensors/           declared devices and the latest reading from each, in memory
+├── automation/        rules, the engine that applies them, and sunrise/sunset
+├── accounts/          users, roles, and scrypt password hashing
+└── storage/           the SQLite file: connection pragmas and schema versioning
 config/                relays.example.yaml — copy and edit; the real file is ignored
 deploy/                pihome-hub.service and install.sh — provisioning a Pi
 docs/                  architecture.md, troubleshooting.md, migration.md
@@ -288,9 +339,11 @@ tests/                 runs without hardware, against the mock backend
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
 | 5 | systemd unit, install script, deployment hardening | ✅ done |
 | 6 | Architecture, installation, migration and troubleshooting docs | ✅ done |
+| 7 | Accounts, roles and sessions | in progress |
 
-The next real piece of work is authentication: two static keys, no sessions and no users
-is what blocks the [web client's](https://github.com/DGPRoman/pihome-hub-web) own roadmap.
+Phase 7 is what unblocks the [web client's](https://github.com/DGPRoman/pihome-hub-web)
+own roadmap. Storage, password hashing, the user store and `pihome-hub-admin` are in
+place; the session endpoints and role enforcement are not yet.
 
 ## License
 
