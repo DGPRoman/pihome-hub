@@ -60,9 +60,10 @@ Three rules, each of which holds today and is asserted by
 2. **`relays` and `sensors` know nothing of each other, and nothing of `automation`.**
    The dependency runs one way: automation reaches into both, because a rule is by
    definition a statement about a sensor and a relay. Neither of them needs a rule to
-   exist. `storage` and `accounts` import none of the three: which table a domain keeps
-   its state in is that domain's business, and who may log in is not a statement about
-   any particular relay.
+   exist. Neither `storage` nor `accounts` imports any of the three: which table a
+   domain keeps its state in is that domain's business, and who may log in is not a
+   statement about any particular relay. `accounts` imports `storage`, and that is the
+   only edge between the two — rows in one direction, never relays in the other.
 3. **Only `app.py` chooses a backend.** The route modules never import `mock` or `gpio`;
    they receive a `RelayService` that already has one.
 
@@ -203,6 +204,36 @@ body, 404 for one that does not — usable with no key and counted by nothing. T
 `RequestValidationError` handler in `app.py` therefore re-checks authentication itself,
 using `authenticate_any_scope`: a narrower question than the route's, asking only "are you
 anonymous?", so it cannot be used to widen a scope.
+
+## Accounts, and the three roles
+
+Three roles, because two would force a choice between "cannot switch anything" and "can
+also delete accounts", and a household wants the middle one:
+
+| Role | May |
+| --- | --- |
+| `admin` | everything, including creating and removing accounts |
+| `operator` | switch relays and read everything — the everyday account |
+| `viewer` | read only: sees what the house is doing, changes nothing |
+
+The values are constrained twice, in the enum and in the `users` table's `CHECK`, so a
+role neither one knows cannot reach a row.
+
+`UserStore` is the only thing that reads the `password_hash` column. A `User` has no such
+field, which means no route can serialise one by accident — not a rule to remember, a
+value nothing outside the store is ever handed.
+
+**The last enabled admin cannot be deleted, disabled or demoted.** Not paternalism: none
+of the three is undoable through any interface this service offers, and the fix would be
+editing SQLite by hand over SSH. Refusing costs one deliberate second admin, which
+someone who genuinely means it would create anyway. A *disabled* admin does not count as
+cover — an account that cannot log in cannot administer anything.
+
+That guard is why writes use `BEGIN IMMEDIATE` rather than the deferred transaction
+sqlite3 starts at the first write. Every one of them reads a count and then writes based
+on what it read; deferred, the write lock is taken only at the write, by which point two
+callers can both have seen "there are two admins" and each removed a different one.
+`tests/accounts/test_store.py` runs exactly that race.
 
 ## How a password is stored
 

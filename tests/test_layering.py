@@ -34,7 +34,7 @@ _ALLOWED_DOMAIN_IMPORTS: Final = {
     "storage": frozenset(),
     # Who may log in is not a statement about any particular relay or sensor. If
     # this ever needs one of them, the rule to add is a role, not an import.
-    "accounts": frozenset(),
+    "accounts": frozenset({"storage"}),
 }
 
 
