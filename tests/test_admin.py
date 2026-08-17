@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pihome_hub.accounts import Role, UserStore
+from pihome_hub.accounts import Role, SessionStore, UserStore
 from pihome_hub.admin import main
 
 PASSWORD = "correct-horse-battery"
@@ -188,6 +188,47 @@ class TestPasswd:
 
         assert main(["--database", str(database), "create", "roman", "--role", "admin"]) == 0
         assert store.authenticate("roman", PASSWORD) is not None
+
+
+class TestChangingAPasswordEndsTheSessions:
+    """A new password that left the old logins running would not lock anybody out,
+    which is most of the reason to change one."""
+
+    def test_open_sessions_are_closed_and_counted(
+        self, admin: Admin, store: UserStore, database: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        admin("create", "roman", "--role", "admin", stdin=f"{PASSWORD}\n")
+        sessions = SessionStore(database)
+        roman = store.get("roman")
+        tokens = [sessions.create(roman)[0], sessions.create(roman)[0]]
+        capsys.readouterr()
+
+        assert admin("passwd", "roman", stdin=f"{OTHER_PASSWORD}\n") == 0
+
+        assert "2 open session(s) closed" in capsys.readouterr().out
+        assert all(sessions.resolve(token) is None for token in tokens)
+
+    def test_another_account_keeps_its_own(
+        self, admin: Admin, store: UserStore, database: Path
+    ) -> None:
+        admin("create", "roman", "--role", "admin", stdin=f"{PASSWORD}\n")
+        admin("create", "anna", "--role", "operator", stdin=f"{PASSWORD}\n")
+        sessions = SessionStore(database)
+        hers, _ = sessions.create(store.get("anna"))
+
+        admin("passwd", "roman", stdin=f"{OTHER_PASSWORD}\n")
+
+        assert sessions.resolve(hers) is not None
+
+    def test_it_says_nothing_about_sessions_when_there_were_none(
+        self, admin: Admin, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        admin("create", "roman", "--role", "admin", stdin=f"{PASSWORD}\n")
+        capsys.readouterr()
+
+        admin("passwd", "roman", stdin=f"{OTHER_PASSWORD}\n")
+
+        assert "session" not in capsys.readouterr().out
 
 
 class TestRoleAndState:

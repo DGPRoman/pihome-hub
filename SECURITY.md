@@ -24,6 +24,9 @@ project with no commercial support and no bug bounty.
 | Online key guessing | Failed attempts are counted per client and per scope over a sliding window; exhausting the allowance returns `429`. See the limits of this below |
 | Route map disclosure through the docs | `/docs` and `/openapi.json` carry no credential, so enabling them is refused unless the service is bound to loopback |
 | Probing for which endpoint exists | A missing key and a wrong key return an identical `401` body, and no error echoes either the supplied or the expected key |
+| Session replay from a stolen database | Only the SHA-256 of each token is stored, so the rows cannot be presented as cookies |
+| A session outliving the account behind it | Resolving one re-reads the account, so disabling, demoting or deleting takes effect on the next request rather than at expiry |
+| A changed password leaving old logins alive | `pihome-hub-admin passwd` ends that account's sessions and reports how many |
 | Password recovery from a stolen database | Passwords are stored as salted `scrypt` hashes and never reversibly; `hub.db` is `0600` inside a `0700` state directory that `StateDirectoryMode=` sets |
 | Username enumeration through an account list | `pihome-hub-admin` is a local command, not a route. No HTTP endpoint reveals which accounts exist |
 | A password on a command line | The admin tool refuses to take one as an argument — `ps` shows every argument to every account on the machine, and shell history keeps it |
@@ -59,10 +62,17 @@ project with no commercial support and no bug bounty.
   a deliberate compromise for a board with 512 MB of RAM, not the strongest setting
   available. A weak password in a stolen database is still a weak password; the 12-
   character minimum is a floor, not a guarantee.
-- **Accounts exist but nothing authenticates with them yet.** They are created and
-  stored; the session endpoints and the role checks on routes are still to come. Until
-  then the two API keys are the whole of the access control, and a role recorded
-  against an account does not restrict anything.
+- **Nothing reaches accounts or sessions over HTTP yet.** Both are stored, and both can
+  be managed locally; the endpoints that would issue and accept a session, and the role
+  checks on routes, are still to come. Until then the two API keys are the whole of the
+  access control, and a role recorded against an account restricts nothing.
+- **A session cannot be revoked from another device.** `pihome-hub-admin` on the Pi can
+  end them — by changing the password, or by disabling the account — but there is no
+  "sign out everywhere" for someone holding only a phone.
+- **A session lasts 30 days from login regardless of use.** A token copied off a device
+  stays valid for the remainder of that window unless the password is changed or the
+  account disabled. Shorten `PIHOME_SESSION_LIFETIME_SECONDS` if that trade is wrong for
+  your household.
 - **No audit trail.** Nothing records who acted, only what the service did.
 - **Physical access wins.** Anyone at the distribution board does not need this API.
 

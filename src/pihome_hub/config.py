@@ -17,6 +17,7 @@ from typing import Annotated, Final, Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from pihome_hub.accounts import DEFAULT_SESSION_LIFETIME_SECONDS
 from pihome_hub.relays.factory import GpioBackendName
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -115,6 +116,13 @@ class Settings(BaseSettings):
     #: and nothing in hub.env can drift away from it. Off systemd it falls back to
     #: a path beside the checkout, which is what a development run wants.
     database_path: Path = Field(default_factory=_default_database_path)
+
+    #: How long a login lasts, counted from the moment it happened rather than from
+    #: the last request. Sliding expiry would mean a database write per authenticated
+    #: request, which on an SD card is a cost the convenience does not cover. The
+    #: default is imported rather than repeated, so the store and the setting cannot
+    #: come to disagree.
+    session_lifetime_seconds: Annotated[int, Field(gt=0)] = DEFAULT_SESSION_LIFETIME_SECONDS
 
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window

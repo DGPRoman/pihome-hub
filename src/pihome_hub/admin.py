@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from pihome_hub.accounts import AccountError, Role, UserStore, check_username
+from pihome_hub.accounts import AccountError, Role, SessionStore, UserStore, check_username
 from pihome_hub.config import resolve_database_path
 from pihome_hub.storage import StorageError, prepare_database
 
@@ -42,7 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         _refuse_to_write_as_the_wrong_user(path)
         prepare_database(path)
-        args.run(args, UserStore(path))
+        args.run(args, UserStore(path), SessionStore(path))
     except (AdminError, AccountError, StorageError) as exc:
         sys.stderr.write(f"{PROGRAM}: {exc}\n")
         return EXIT_FAILURE
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 # -- Commands ----------------------------------------------------------------
 
 
-def _create(args: argparse.Namespace, store: UserStore) -> None:
+def _create(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     # Checked before the prompt rather than left to the store, which checks it too.
     # Not duplicated logic — the same function, called early, so that nobody types a
     # password twice only to be told the name was never going to be accepted.
@@ -68,7 +68,7 @@ def _create(args: argparse.Namespace, store: UserStore) -> None:
     _out(f"created {user.username!r} as {user.role.value}")
 
 
-def _list(args: argparse.Namespace, store: UserStore) -> None:
+def _list(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     users = store.list_users()
     if not users:
         _out(f"no accounts yet. Create one with: {PROGRAM} create <username> --role admin")
@@ -82,32 +82,39 @@ def _list(args: argparse.Namespace, store: UserStore) -> None:
         _out(f"{user.username:<{width}}  {user.role.value:<8}  {state:<8}  {created}")
 
 
-def _passwd(args: argparse.Namespace, store: UserStore) -> None:
+def _passwd(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     # Looked up before the prompt for the same reason, and for one more: the store
     # hashes before it reads, so a short password for a name that does not exist was
     # reported as a weak password. The operator's actual mistake was the name.
     user = store.get(args.username)
 
     store.set_password(user.username, _read_password())
-    _out(f"password changed for {user.username!r}")
+    # A new password that left the old sessions running would not lock anybody out,
+    # which is most of the reason to change one. Unlike disabling or deleting — both
+    # of which a session notices by itself, because resolving one re-reads the
+    # account — this needs saying, since the row a session points at has not changed.
+    ended = sessions.destroy_all_for(user)
+
+    closed = "" if ended == 0 else f", and {ended} open session(s) closed"
+    _out(f"password changed for {user.username!r}{closed}")
 
 
-def _role(args: argparse.Namespace, store: UserStore) -> None:
+def _role(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     user = store.set_role(args.username, Role(args.role))
     _out(f"{user.username!r} is now {user.role.value}")
 
 
-def _disable(args: argparse.Namespace, store: UserStore) -> None:
+def _disable(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     user = store.set_disabled(args.username, True)
-    _out(f"{user.username!r} disabled. Its password is kept; enable restores access")
+    _out(f"{user.username!r} disabled. Its sessions stop working at once; the password is kept")
 
 
-def _enable(args: argparse.Namespace, store: UserStore) -> None:
+def _enable(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     user = store.set_disabled(args.username, False)
     _out(f"{user.username!r} enabled")
 
 
-def _delete(args: argparse.Namespace, store: UserStore) -> None:
+def _delete(args: argparse.Namespace, store: UserStore, sessions: SessionStore) -> None:
     # Confirmed only where there is someone to ask. Scripted, --yes is not required:
     # a script that reached this line already said what it meant.
     if not args.yes and sys.stdin.isatty():

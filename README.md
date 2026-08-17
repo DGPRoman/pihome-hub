@@ -108,6 +108,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
 | `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
+| `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days), from when it happened rather than from the last request |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
 | `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
 
@@ -124,9 +125,9 @@ an API that requires an admin.
 ```bash
 pihome-hub-admin create roman --role admin   # prompts for the password, twice
 pihome-hub-admin list
-pihome-hub-admin passwd roman
+pihome-hub-admin passwd roman                # also ends that account's open sessions
 pihome-hub-admin role anna operator
-pihome-hub-admin disable guest               # keeps the password; enable restores access
+pihome-hub-admin disable guest               # its sessions stop at once; the password is kept
 pihome-hub-admin delete guest
 ```
 
@@ -158,8 +159,16 @@ It will not accept a password under 12 characters. And it will not delete, disab
 demote the last enabled admin — none of the three is undoable through any interface this
 service offers, and the fix would be editing SQLite by hand over SSH.
 
-**Nothing logs in yet.** Accounts are stored and can be listed; the session endpoints that
-would use them are the next piece of work.
+Sessions last 30 days from the moment of login rather than from the last request, which
+keeps the read path free of database writes — a Pi runs on an SD card. Disabling, demoting
+or deleting an account takes effect on its next request, because resolving a session
+re-reads the account rather than trusting what was true when it was opened. A password
+change is the one that has to be said out loud, which is why `passwd` ends the sessions
+itself.
+
+**Nothing logs in over HTTP yet.** Accounts and sessions are stored, and both can be
+managed on the Pi; the endpoints that issue and accept a session are the next piece of
+work.
 
 ## API
 

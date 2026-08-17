@@ -32,6 +32,27 @@ MIGRATIONS: Final[tuple[str, ...]] = (
     -- phishing affordance, not a feature.
     CREATE UNIQUE INDEX users_username_unique ON users (username COLLATE NOCASE);
     """,
+    # 2 — login sessions.
+    """
+    CREATE TABLE sessions (
+        -- The SHA-256 of the token, never the token. A stolen database therefore
+        -- holds verifiers rather than credentials: the rows cannot be replayed.
+        token_hash TEXT    PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT    NOT NULL,
+        expires_at TEXT    NOT NULL
+    ) WITHOUT ROWID;
+    -- WITHOUT ROWID because every lookup is by that primary key: it keeps the row in
+    -- the index rather than adding a second B-tree to reach it.
+
+    -- Deleting an account ends its sessions, which is what ON DELETE CASCADE above
+    -- says and why storage/database.py switches foreign keys on for every
+    -- connection. Without the pragma that clause is decoration.
+    CREATE INDEX sessions_user_id ON sessions (user_id);
+    -- Expired rows are removed in bulk when a session is opened, which is a scan
+    -- over this rather than over the table.
+    CREATE INDEX sessions_expires_at ON sessions (expires_at);
+    """,
 )
 
 #: The schema this build understands.

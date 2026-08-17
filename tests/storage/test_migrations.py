@@ -99,3 +99,54 @@ class TestTheMigrationListIsAppendOnly:
     def test_the_recorded_version_matches_the_number_of_migrations(self) -> None:
         """A migration deleted rather than appended to would silently renumber the rest."""
         assert len(MIGRATIONS) == LATEST_VERSION
+
+
+class TestTheSessionsTable:
+    @pytest.fixture
+    def connection(self, tmp_path: Path) -> Iterator[sqlite3.Connection]:
+        with connect(tmp_path / "hub.db") as connection:
+            migrate(connection)
+            connection.execute(
+                "INSERT INTO users (id, username, password_hash, role, created_at)"
+                " VALUES (1, 'roman', 'hash', 'admin', '2026-01-01T00:00:00Z')"
+            )
+            yield connection
+
+    def _insert(self, connection: sqlite3.Connection, token_hash: str, user_id: int = 1) -> None:
+        connection.execute(
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at)"
+            " VALUES (?, ?, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z')",
+            (token_hash, user_id),
+        )
+
+    def test_a_session_must_belong_to_an_account_that_exists(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """The foreign key, which is only a rule because the pragma switches it on."""
+        with pytest.raises(sqlite3.IntegrityError):
+            self._insert(connection, "abc", user_id=404)
+
+    def test_deleting_the_account_deletes_its_sessions(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        self._insert(connection, "abc")
+
+        connection.execute("DELETE FROM users WHERE id = 1")
+
+        assert connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+
+    def test_one_row_per_token(self, connection: sqlite3.Connection) -> None:
+        self._insert(connection, "abc")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            self._insert(connection, "abc")
+
+    def test_it_is_reached_by_its_primary_key_rather_than_a_rowid(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """WITHOUT ROWID: one B-tree for a table every lookup enters by that key."""
+        sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'sessions'"
+        ).fetchone()[0]
+
+        assert "WITHOUT ROWID" in sql

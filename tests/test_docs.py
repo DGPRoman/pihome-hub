@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
+from pydantic_core import PydanticUndefined
 
 from pihome_hub.__main__ import EXIT_CONFIGURATION_ERROR
 from pihome_hub.accounts import MIN_PASSWORD_LENGTH
@@ -137,3 +139,36 @@ class TestEverySettingIsDocumented:
         )
 
         assert not documented - self._expected()
+
+
+class TestEnvExampleQuotesTheCurrentDefaults:
+    """A name in the file is not much use if the value beside it is last year's.
+
+    Coerced through the field's own type before comparing, rather than compared as
+    text: ``300`` and ``300.0`` are the same default written two ways, and a guard
+    that called those a drift would be turned off within a week.
+    """
+
+    def test_every_value_it_sets_is_the_default(self) -> None:
+        example = (REPO_ROOT / ".env.example").read_text()
+        stale: list[str] = []
+
+        for name, written in re.findall(r"^(PIHOME_[A-Z0-9_]+)=(.*)$", example, re.MULTILINE):
+            field = Settings.model_fields[name.removeprefix("PIHOME_").lower()]
+            if field.default is PydanticUndefined:
+                # Required, or environment-dependent: the file holds a placeholder
+                # for the first and says nothing for the second.
+                continue
+
+            # Annotated: the adapter is built from a runtime type, so it is Any-typed.
+            parsed: object = TypeAdapter(field.annotation).validate_python(written.strip())
+            if parsed != field.default:
+                stale.append(f"{name}: file says {parsed!r}, code says {field.default!r}")
+
+        assert not stale
+
+    def test_it_checked_something(self) -> None:
+        """The sweep above passes vacuously if the pattern stops matching."""
+        example = (REPO_ROOT / ".env.example").read_text()
+
+        assert len(re.findall(r"^PIHOME_[A-Z0-9_]+=", example, re.MULTILINE)) > 5
