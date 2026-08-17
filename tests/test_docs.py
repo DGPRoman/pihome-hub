@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from pihome_hub.__main__ import EXIT_CONFIGURATION_ERROR
+from pihome_hub.accounts import MIN_PASSWORD_LENGTH
 from pihome_hub.config import MIN_API_KEY_LENGTH, Settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -87,9 +88,16 @@ class TestEveryNumberItQuotesIsStillTrue:
         assert f"`RestartPreventExitStatus={EXIT_CONFIGURATION_ERROR}`" in guide
 
     def test_the_minimum_key_length(self, guide: str) -> None:
-        quoted = re.search(r"at least (\d+) characters", guide)
+        # Anchored on "API key": the guide quotes a password minimum too, and an
+        # unanchored search silently returned whichever came first in the file.
+        quoted = re.search(r"API key must be at least (\d+) characters", guide)
         assert quoted is not None
         assert int(quoted.group(1)) == MIN_API_KEY_LENGTH
+
+    def test_the_minimum_password_length(self, guide: str) -> None:
+        quoted = re.search(r"password must be at least (\d+) characters", guide)
+        assert quoted is not None
+        assert int(quoted.group(1)) == MIN_PASSWORD_LENGTH
 
     def test_the_port_in_every_example(self, guide: str) -> None:
         ports = {int(port) for port in re.findall(r"127\.0\.0\.1:(\d+)", guide)}
@@ -100,3 +108,32 @@ class TestEveryNumberItQuotesIsStillTrue:
         assert quoted is not None
         window = Settings.model_fields["auth_failure_window_seconds"].default
         assert int(quoted.group(1)) == window
+
+
+class TestEverySettingIsDocumented:
+    """``__main__.py`` tells an operator with a broken configuration that every setting
+    is documented in ``.env.example`` and in ``README.md``. That is a promise a sweep can
+    keep — ``PIHOME_DATABASE_PATH`` had already slipped past it once."""
+
+    @staticmethod
+    def _expected() -> set[str]:
+        return {f"PIHOME_{name.upper()}" for name in Settings.model_fields}
+
+    def test_env_example_names_every_setting(self) -> None:
+        example = (REPO_ROOT / ".env.example").read_text()
+        found = set(re.findall(r"PIHOME_[A-Z0-9_]+", example))
+
+        assert not self._expected() - found
+
+    def test_the_readme_names_every_setting(self, readme: str) -> None:
+        found = set(re.findall(r"PIHOME_[A-Z0-9_]+", readme))
+
+        assert not self._expected() - found
+
+    def test_nothing_documented_has_since_been_removed(self, readme: str) -> None:
+        """The other direction: a variable an operator sets that no longer does anything."""
+        documented = set(re.findall(r"PIHOME_[A-Z0-9_]+", readme)) | set(
+            re.findall(r"PIHOME_[A-Z0-9_]+", (REPO_ROOT / ".env.example").read_text())
+        )
+
+        assert not documented - self._expected()

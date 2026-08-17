@@ -104,6 +104,25 @@ ls /dev/gpiochip*                                  # gpiochip0 is what the unit 
 | One relay is inverted and the config looks right | `active_low` is set per relay, not globally — check that one entry. A misspelled key cannot be the cause: unknown keys are refused at startup |
 | Relays change state while the service is stopped | Expected, and not fixable in software. A released GPIO pin returns to an input with no pull, so a stopped service leaves each relay following the board's idle level. `shutdown_state` governs only the moment before release |
 
+## `pihome-hub-admin` refuses
+
+Exit `1` means the request was understood and refused; exit `2` is argparse, meaning the
+command line itself was wrong. Every message below was produced by the installed command.
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `/var/lib/pihome-hub belongs to 'pihome', and a database written there as root is one the service cannot write` | Run as root, or under plain `sudo` | `sudo -u pihome pihome-hub-admin ...`, as the message says |
+| `could not open the database at …: unable to open database file` | Run as an account that cannot write the state directory | As above |
+| `no account named 'roman'` | A typo, or the wrong Pi | `pihome-hub-admin list` shows what exists |
+| `an account named 'Roman' already exists` | Names are unique ignoring case | Pick another name; `Roman` and `roman` cannot both exist |
+| `username 'no spaces' must be letters and digits, optionally separated by '.', '_' or '-'` | A space, or a character that does not read the same everywhere | Reported before the password prompt, so nothing was typed twice |
+| `password must be at least 12 characters, got 5` | Too short | Length is the only rule; there is no composition requirement |
+| `the two passwords did not match` | A typo at the second prompt | Nothing was written |
+| `'roman' is the only enabled admin; create another one before changing this account` | Deleting, disabling or demoting the last admin | Create a second admin first. A *disabled* admin does not count as cover |
+
+The last one is not adjustable. Losing the only admin is not undoable through anything
+this service offers — the recovery would be editing SQLite by hand over SSH.
+
 ## The API refuses the request
 
 | Status | Body | Meaning |
@@ -204,3 +223,7 @@ Stated so the rest can be trusted:
   checked.
 - **The `gpio` group.** `SupplementaryGroups=gpio` assumes a group that Raspberry Pi OS
   has and many distributions do not. `deploy/install.sh` refuses to continue without it.
+- **The root refusal, as actual root.** The message quoted above came from the installed
+  command with `os.geteuid` returning 0 — the same code path, reached without needing a
+  root shell. That a database created by root is one the service cannot write follows from
+  file ownership, not from anything specific to this program.

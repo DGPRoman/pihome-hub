@@ -24,6 +24,9 @@ project with no commercial support and no bug bounty.
 | Online key guessing | Failed attempts are counted per client and per scope over a sliding window; exhausting the allowance returns `429`. See the limits of this below |
 | Route map disclosure through the docs | `/docs` and `/openapi.json` carry no credential, so enabling them is refused unless the service is bound to loopback |
 | Probing for which endpoint exists | A missing key and a wrong key return an identical `401` body, and no error echoes either the supplied or the expected key |
+| Password recovery from a stolen database | Passwords are stored as salted `scrypt` hashes and never reversibly; `hub.db` is `0600` inside a `0700` state directory that `StateDirectoryMode=` sets |
+| Username enumeration through an account list | `pihome-hub-admin` is a local command, not a route. No HTTP endpoint reveals which accounts exist |
+| A password on a command line | The admin tool refuses to take one as an argument — `ps` shows every argument to every account on the machine, and shell history keeps it |
 | Example credentials reaching production | Startup validation rejects keys shorter than 32 characters and keys that still look like the shipped example |
 | Secrets in the repository | Credentials live only in `.env`, which is git-ignored; no key, address or coordinate is present in source |
 | Route map disclosure | OpenAPI and Swagger UI are off unless `PIHOME_DOCS_ENABLED=true` |
@@ -52,8 +55,15 @@ project with no commercial support and no bug bounty.
   the proxy, and rate limiting belongs in the proxy instead.
 - **No protection against a compromised client.** A key held by a phone or a sensor is
   a key an attacker who owns that device also holds.
-- **No multi-user model.** There are two roles, not user accounts, and no audit trail
-  of who acted.
+- **Offline guessing of a stolen hash is slowed, not prevented.** `scrypt` at 16 MiB is
+  a deliberate compromise for a board with 512 MB of RAM, not the strongest setting
+  available. A weak password in a stolen database is still a weak password; the 12-
+  character minimum is a floor, not a guarantee.
+- **Accounts exist but nothing authenticates with them yet.** They are created and
+  stored; the session endpoints and the role checks on routes are still to come. Until
+  then the two API keys are the whole of the access control, and a role recorded
+  against an account does not restrict anything.
+- **No audit trail.** Nothing records who acted, only what the service did.
 - **Physical access wins.** Anyone at the distribution board does not need this API.
 
 ## Deploying safely

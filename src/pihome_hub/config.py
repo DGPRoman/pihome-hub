@@ -50,6 +50,24 @@ def _state_directory() -> Path:
     return Path(first) if first else Path("var")
 
 
+def _default_database_path() -> Path:
+    return _state_directory() / "hub.db"
+
+
+def resolve_database_path() -> Path:
+    """Where accounts live, without needing the rest of the configuration.
+
+    For the admin tool. It has no business requiring the two API keys, which on a Pi
+    live in a file only root can read — asking it to load :class:`Settings` would
+    mean either running the account manager as root or copying secrets around.
+
+    Reads the same variable pydantic-settings would, and falls back the same way. A
+    test asserts the two agree, in both the default and the overridden case.
+    """
+    override = os.environ.get("PIHOME_DATABASE_PATH", "")
+    return Path(override) if override else _default_database_path()
+
+
 class Settings(BaseSettings):
     """Runtime configuration for the service."""
 
@@ -96,7 +114,7 @@ class Settings(BaseSettings):
     #: created, so the one declaration in pihome-hub.service decides this on a Pi
     #: and nothing in hub.env can drift away from it. Off systemd it falls back to
     #: a path beside the checkout, which is what a development run wants.
-    database_path: Path = Field(default_factory=lambda: _state_directory() / "hub.db")
+    database_path: Path = Field(default_factory=_default_database_path)
 
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from pihome_hub.config import MIN_API_KEY_LENGTH
+from pihome_hub.config import MIN_API_KEY_LENGTH, resolve_database_path
 from tests.conftest import VALID_KEY, build_settings
 
 
@@ -77,3 +77,26 @@ class TestServerSettings:
         settings = build_settings()
         with pytest.raises(ValidationError):
             settings.port = 1234
+
+
+class TestTheDatabasePathHasOneAnswer:
+    """``resolve_database_path()`` exists so the admin tool need not load Settings.
+
+    Two functions computing one location is how they come to disagree, so these
+    assert they agree rather than trusting that they do.
+    """
+
+    def test_it_matches_the_settings_default(self) -> None:
+        assert resolve_database_path() == build_settings().database_path
+
+    def test_it_matches_an_overridden_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PIHOME_DATABASE_PATH", "/srv/somewhere/else/hub.db")
+
+        assert resolve_database_path() == build_settings().database_path
+
+    def test_it_follows_the_state_directory_systemd_exports(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STATE_DIRECTORY", "/var/lib/pihome-hub")
+
+        assert resolve_database_path() == build_settings().database_path
