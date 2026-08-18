@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Keeps a release pull request open that accumulates every change since the
+  # last tag: it derives the next version from the commit types (fix -> patch,
+  # feat -> minor, ! or BREAKING CHANGE -> major), rewrites the version in
+  # pyproject.toml, and writes CHANGELOG.md. Merging that pull request is what
+  # publishes the tag and the GitHub release, so releasing stays a decision
+  # rather than a side effect of pushing.
+  #
+  # Note: the pull request is created with the default GITHUB_TOKEN, and events
+  # from that token do not start other workflows — so CI does not run on the
+  # release pull request itself. Everything in it has already been through CI
+  # on the way to main.
+  release-please:
+    name: Release pull request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
+        with:
+          release-type: python
