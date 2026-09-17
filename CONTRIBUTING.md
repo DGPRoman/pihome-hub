@@ -55,9 +55,16 @@ own style. Those commits are left alone: rewriting them would change every
 hash and break the links from issues and pull requests that refer to them. The
 log therefore has a visible seam, which is the honest cost of the change.
 
-What it buys is release automation. Versions had sat at `0.1.0` with no tags,
-no releases and no changelog; `.github/workflows/release.yml` now derives all
-three from the commit types.
+The convention was adopted for release automation, and that automation has since
+been removed. release-please can only open its pull request if the repository
+allows GitHub Actions to create and approve pull requests — a permission that
+also lets a workflow approve one, which is wider than the automation was worth on
+a repository whose pull requests are reviewed by hand anyway.
+
+What the convention still buys is a log that says what each change *is* rather
+than only what it touched, and a history a tool can read. Tags and a changelog
+can be derived from it later, or the automation restored behind a token of its
+own, without rewriting anything a second time.
 
 ## Dependencies
 
