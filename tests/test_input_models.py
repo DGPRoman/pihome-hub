@@ -38,6 +38,11 @@ _ENVIRONMENT: Final = {"Settings"}
 #: gpiozero lives in the optional ``rpi`` extra, so this module is not importable
 #: off a Pi. Named rather than skipped silently, so a second unimportable module
 #: fails this test instead of quietly dropping its models from the sweep.
+#:
+#: Treated as a permitted set rather than an exact one. Requiring equality made a
+#: green suite depend on the extra never being installed — and it is installed by
+#: ``deploy/install.sh`` and by the README's own instructions for a Pi, where the
+#: failure lands during collection and takes the entire session down with it.
 _NOT_IMPORTABLE: Final = {"pihome_hub.relays.gpio"}
 
 
@@ -51,7 +56,8 @@ def _all_models() -> dict[str, type[BaseModel]]:
         except ImportError:
             unimportable.add(module.name)
 
-    assert unimportable == _NOT_IMPORTABLE, f"unexpected import failures: {unimportable}"
+    unexpected = unimportable - _NOT_IMPORTABLE
+    assert not unexpected, f"unexpected import failures: {unexpected}"
 
     found: dict[str, type[BaseModel]] = {}
     stack: list[type[BaseModel]] = [BaseModel]

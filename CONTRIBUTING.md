@@ -70,6 +70,7 @@ install shape:
 | `base.txt` | Runtime only | `deploy/install.sh` on a host with no GPIO |
 | `rpi.txt` | Runtime and the hardware backend | `deploy/install.sh` on a Pi |
 | `dev.txt` | Runtime and the tooling | CI, and a development checkout |
+| `dev-rpi.txt` | Runtime, the tooling and the hardware backend | The CI leg that exercises `relays/gpio.py` |
 
 After changing a dependency in `pyproject.toml`, regenerate them:
 
