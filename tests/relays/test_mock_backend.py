@@ -8,12 +8,25 @@ from pihome_hub.relays import MockRelayBackend
 
 
 class TestReadLevel:
-    def test_defaults_to_off_for_an_unseeded_pin(self, backend: MockRelayBackend) -> None:
-        assert backend.read_level(17, active_low=True) is False
+    def test_an_unseeded_pin_is_unknown_rather_than_off(self, backend: MockRelayBackend) -> None:
+        """Not False: this backend has no physical world to read.
+
+        Answering False would let a test pass in a situation where the real
+        backend reports that it cannot tell — which is the same conflation that
+        made ``initial_state: preserve`` energise a relay on a level the probe
+        itself had created.
+        """
+        assert backend.read_level(17, active_low=True) is None
 
     def test_reflects_a_seeded_level(self, backend: MockRelayBackend) -> None:
         backend.seed_level(17, on=True)
         assert backend.read_level(17, active_low=True) is True
+
+    def test_reflects_a_seeded_off_level_distinctly_from_an_unseeded_one(
+        self, backend: MockRelayBackend
+    ) -> None:
+        backend.seed_level(17, on=False)
+        assert backend.read_level(17, active_low=True) is False
 
 
 class TestSetupOutput:

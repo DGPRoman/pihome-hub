@@ -65,7 +65,18 @@ class RelayService:
             return True
         if relay.initial_state == "off":
             return False
-        return self._backend.read_level(relay.pin, active_low=relay.active_low)
+
+        level = self._backend.read_level(relay.pin, active_low=relay.active_low)
+        if level is None:
+            # De-energised, not energised. "Preserve" cannot preserve what could
+            # not be read, and of the two guesses only one of them closes a mains
+            # circuit on a house nobody is watching.
+            logger.warning(
+                "could not read the relay's level; starting it de-energised",
+                extra={"relay_id": relay.id, "pin": relay.pin},
+            )
+            return False
+        return level
 
     def _require(self, relay_id: str) -> RelayConfig:
         try:
