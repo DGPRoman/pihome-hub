@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -25,6 +26,7 @@ class TestConnect:
 
         assert target.exists()
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the permission bits these rely on")
     def test_reports_a_directory_it_cannot_create_as_a_storage_error(self, tmp_path: Path) -> None:
         read_only = tmp_path / "locked"
         read_only.mkdir(mode=0o500)
@@ -35,6 +37,7 @@ class TestConnect:
         ):
             pass
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the permission bits these rely on")
     def test_reports_an_existing_database_it_cannot_write_as_a_storage_error(
         self, tmp_path: Path
     ) -> None:
