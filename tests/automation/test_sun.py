@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
+from astral import Observer
+from astral.sun import sun as astral_sun
 
 from pihome_hub.automation import Location, SunClock
 
@@ -22,6 +26,26 @@ class FrozenClock:
 
 def clock_at(hour_utc: int, *, day: int = 21, month: int = 6) -> FrozenClock:
     return FrozenClock(datetime(2026, month, day, hour_utc, 0, tzinfo=UTC))
+
+
+def record_sun_calls(monkeypatch: pytest.MonkeyPatch) -> list[dt.date]:
+    """The local date of every astral computation, in the order they happen.
+
+    A spy rather than a stub: the real function still answers, so these tests keep
+    asserting the darkness the cache is there to serve rather than a fixture's idea
+    of it.
+    """
+    computed: list[dt.date] = []
+
+    def recording(observer: Observer, *, date: dt.date, tzinfo: ZoneInfo) -> dict[str, datetime]:
+        computed.append(date)
+        return astral_sun(observer, date=date, tzinfo=tzinfo)
+
+    # Named as a path rather than reached through the module object: sun.py binds
+    # the function into its own namespace with a plain `from astral.sun import
+    # sun`, which strict mode reads as not exported.
+    monkeypatch.setattr("pihome_hub.automation.sun.sun", recording)
+    return computed
 
 
 class TestIsDark:
@@ -45,17 +69,23 @@ class TestIsDark:
 
 
 class TestCaching:
-    def test_sun_times_are_computed_once_per_day(self) -> None:
+    def test_sun_times_are_computed_once_per_day(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        computed = record_sun_calls(monkeypatch)
         clock = FrozenClock(datetime(2026, 6, 21, 9, 0, tzinfo=UTC))
         sun = SunClock(KYIV, clock=clock)
 
         sun.is_dark()
-        first = sun._cached_for
-
+        # A later hour, same local date: the cache is what must absorb this.
+        clock.moment = datetime(2026, 6, 21, 19, 0, tzinfo=UTC)
         sun.is_dark()
-        assert sun._cached_for is first
 
-    def test_the_cache_refreshes_on_a_new_date(self) -> None:
+        # What matters is that astral is consulted once for a date. The previous
+        # assertion compared a private attribute by identity, which pinned how the
+        # result is stored rather than that the work is not repeated.
+        assert computed == [dt.date(2026, 6, 21)]
+
+    def test_the_cache_refreshes_on_a_new_date(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        computed = record_sun_calls(monkeypatch)
         clock = FrozenClock(datetime(2026, 6, 21, 9, 0, tzinfo=UTC))
         sun = SunClock(KYIV, clock=clock)
         sun.is_dark()
@@ -63,6 +93,7 @@ class TestCaching:
         clock.moment = datetime(2026, 12, 21, 14, 0, tzinfo=UTC)
 
         assert sun.is_dark() is True
+        assert computed == [dt.date(2026, 6, 21), dt.date(2026, 12, 21)]
 
 
 class TestConfiguration:
