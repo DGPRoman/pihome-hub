@@ -23,8 +23,15 @@ class MockRelayBackend:
         """
         self._levels[pin] = on
 
-    def read_level(self, pin: int, *, active_low: bool) -> bool:
-        return self._levels.get(pin, False)
+    def read_level(self, pin: int, *, active_low: bool) -> bool | None:
+        """The seeded level, or ``None`` for a pin no test has said anything about.
+
+        Unseeded is genuinely unknown here rather than off: this backend has no
+        physical world to read, and answering ``False`` would let a test pass
+        while the real backend, in the same situation, reports that it cannot
+        tell.
+        """
+        return self._levels.get(pin)
 
     def setup_output(self, pin: int, *, active_low: bool, initial: bool) -> None:
         self._claimed.add(pin)

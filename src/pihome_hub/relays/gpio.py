@@ -12,6 +12,7 @@ Treat a first deployment as a test, not a given.
 from __future__ import annotations
 
 from gpiozero import DigitalInputDevice, OutputDevice
+from gpiozero.exc import PinFixedPull
 
 
 class GpioZeroRelayBackend:
@@ -25,14 +26,33 @@ class GpioZeroRelayBackend:
     def __init__(self) -> None:
         self._devices: dict[int, OutputDevice] = {}
 
-    def read_level(self, pin: int, *, active_low: bool) -> bool:
-        # A floating read of a pin nothing has claimed yet. `pull_up=False`
-        # matches the BCM default pull-down present on most GPIOs; a relay board
-        # wired to a pin with a different boot-time pull may read incorrectly
-        # here. `initial_state: on`/`off` sidesteps the question entirely by
-        # not reading the pin at all.
-        with DigitalInputDevice(pin, pull_up=False) as probe:
-            raw = bool(probe.is_active)
+    def read_level(self, pin: int, *, active_low: bool) -> bool | None:
+        """Read what the relay is doing, without telling it what to do.
+
+        ``pull_up=None`` is the whole point. gpiozero's ``InputDevice`` applies a
+        pull unless told not to, so ``pull_up=False`` did not mean "leave the line
+        alone" — it drove a pull-down and then measured the level it had just
+        created. On an undriven pin that reads low, and with the default
+        ``active_low`` the inversion turns low into logical *on*: a relay closing
+        a mains circuit at startup on the strength of the probe's own pull. BCM 0
+        to 8 boot with a pull-*up*, so on those the old probe actively inverted
+        what it was trying to observe.
+
+        ``active_state`` has to be given alongside: with no pull there is no
+        resting level, and gpiozero refuses to guess which way is active.
+        """
+        try:
+            with DigitalInputDevice(pin, pull_up=None, active_state=True) as probe:
+                raw = bool(probe.value)
+        except PinFixedPull:
+            # GPIO 2 and 3 carry fixed board pull-up resistors, which gpiozero will
+            # not let anything override — not even to leave them alone. Their level
+            # therefore describes the board rather than the relay, so there is
+            # nothing here to preserve. Reported as unknown rather than raised: a
+            # relay on one of these pins can still be driven perfectly well, and
+            # refusing to start over a reading nobody can take would be worse than
+            # starting it de-energised.
+            return None
         return (not raw) if active_low else raw
 
     def setup_output(self, pin: int, *, active_low: bool, initial: bool) -> None:
