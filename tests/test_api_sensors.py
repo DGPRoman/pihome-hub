@@ -118,6 +118,10 @@ class TestReading:
                 "id": "porch-motion",
                 "label": "Porch motion",
                 "stale": True,
+                # The window the flag was decided against, so a client can judge a
+                # single quantity for itself rather than trusting one flag for the
+                # whole device.
+                "stale_after_seconds": 300.0,
                 "last_seen": None,
                 "motion": None,
                 "motion_updated_at": None,

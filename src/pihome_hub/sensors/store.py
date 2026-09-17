@@ -66,6 +66,7 @@ class SensorStore:
             id=state.device.id,
             label=state.device.label,
             stale=stale,
+            stale_after_seconds=state.device.stale_after_seconds,
             last_seen=state.last_seen,
             motion=state.motion,
             motion_updated_at=state.motion_updated_at,
