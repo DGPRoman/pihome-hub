@@ -27,7 +27,10 @@ class TestShutdownState:
 
         service.close()
 
-        assert service.status()["porch-light"] is True
+        # The pin, not service.status(). That reads the service's own _state dict,
+        # which the "leave" branch never touches, so it reported the constructor's
+        # value back whatever close() did to the hardware.
+        assert backend.is_on(17) is True
 
     def test_off_de_energises_before_releasing_the_pin(self) -> None:
         backend = MockRelayBackend()

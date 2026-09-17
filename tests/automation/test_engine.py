@@ -179,8 +179,14 @@ class TestHoldTimers:
         for _ in range(5):
             await engine.handle_reading("porch-motion", SensorReading(motion=True))
 
-        assert len(engine.pending_holds) == 1
+        # Counted from the event loop. pending_holds is derived from a dict keyed
+        # by relay id, so one relay can only ever yield one entry no matter what
+        # the engine does — the previous assertion held even with the cancellation
+        # removed and five live revert tasks left running per trigger.
+        assert live_hold_tasks() == 1
+
         await engine.aclose()
+        assert live_hold_tasks() == 0
 
     async def test_holds_on_different_relays_are_independent(self) -> None:
         relays = make_relays()
@@ -197,6 +203,21 @@ class TestHoldTimers:
         assert relays.state_of("porch-light") is False
         assert relays.state_of("gate-light") is True
         await engine.aclose()
+
+
+def live_hold_tasks() -> int:
+    """Hold timers that will still fire, counted from the event loop.
+
+    Cancellation is a request, not an act: a cancelled task stays not-done until
+    the loop next runs it, so "not done" alone would count four timers that are
+    already on their way out. ``cancelling()`` is what separates a timer still
+    waiting to revert a relay from one that has been called off.
+    """
+    return sum(
+        1
+        for task in asyncio.all_tasks()
+        if task.get_name().startswith("pihome-hold-") and not task.done() and task.cancelling() == 0
+    )
 
 
 @pytest.mark.anyio
