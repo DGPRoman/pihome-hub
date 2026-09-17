@@ -20,14 +20,15 @@ from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
 from pihome_hub.api.v1.session import router as session_router
-from pihome_hub.automation import AutomationEngine, SunClock, load_automation
+from pihome_hub.automation import AutomationEngine, AutomationError, SunClock, load_automation
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.logging import configure_logging
 from pihome_hub.ratelimit import FailureLimiter
-from pihome_hub.relays import RelayService, UnknownRelayError, load_relays
+from pihome_hub.relays import RelayHardwareError, RelayService, UnknownRelayError, load_relays
 from pihome_hub.relays.factory import create_backend
 from pihome_hub.security import authenticate_any_scope
 from pihome_hub.sensors import SensorStore, UnknownDeviceError, load_sensors
+from pihome_hub.storage import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,26 @@ async def _not_found_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
+async def _unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map a subsystem that has failed to 503 rather than to an unhandled 500.
+
+    These are not the caller's fault and are not fixed by changing the request:
+    a relay that stopped answering, a state directory that went read-only, an
+    automation engine that could not run. 503 says "not now" — which is true, and
+    which a client can act on — where 500 says "this service is broken" and
+    invites a retry of exactly the same shape.
+
+    The body does not vary with the cause. The detail lands in the log, where the
+    operator is, rather than in a response, where an authenticated caller who
+    cannot fix it would only learn the service's file paths and pin numbers.
+    """
+    logger.error("a subsystem failed while serving a request", exc_info=exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "The hub could not complete the request. Check its logs."},
+    )
+
+
 async def _validation_handler(request: Request, exc: Exception) -> JSONResponse:
     """Answer 401 before 422 when the caller never proved who it was.
 
@@ -222,6 +243,12 @@ def create_app(
 
     app.add_exception_handler(UnknownRelayError, _not_found_handler)
     app.add_exception_handler(UnknownDeviceError, _not_found_handler)
+    # Registered by the specific class, not by RelayError or SensorError: those are
+    # the base classes of the two above, and a handler on a base class would swallow
+    # the 404s into 503s.
+    app.add_exception_handler(RelayHardwareError, _unavailable_handler)
+    app.add_exception_handler(StorageError, _unavailable_handler)
+    app.add_exception_handler(AutomationError, _unavailable_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.include_router(system_router)
     app.include_router(session_router)

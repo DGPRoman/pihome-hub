@@ -76,7 +76,19 @@ class RelayService:
     def _set(self, relay_id: str, *, on: bool) -> bool:
         relay = self._require(relay_id)
         with self._lock:
-            self._backend.write(relay.pin, on=on)
+            try:
+                self._backend.write(relay.pin, on=on)
+            except Exception as exc:
+                # Translated rather than allowed to escape. gpiozero's own exception
+                # types reached the API as an unhandled 500 with a foreign traceback,
+                # which is the same failure this class was introduced at startup to
+                # prevent — startup was simply the only place anyone had met it.
+                #
+                # _state is deliberately left where it was. The write may or may not
+                # have reached the pin; what is certain is that nothing confirmed it,
+                # and of the two ways to be wrong, reporting a relay as on when it
+                # might be off is the one that gets somebody hurt.
+                raise RelayHardwareError(relay.id, relay.pin, exc, action="drive") from exc
             self._state[relay.id] = on
         return on
 
