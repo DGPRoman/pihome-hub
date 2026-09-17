@@ -58,3 +58,32 @@ log therefore has a visible seam, which is the honest cost of the change.
 What it buys is release automation. Versions had sat at `0.1.0` with no tags,
 no releases and no changelog; `.github/workflows/release.yml` now derives all
 three from the commit types.
+
+## Dependencies
+
+Direct versions are declared in `pyproject.toml`. Everything actually installed —
+transitive packages included — is pinned with hashes in `requirements/`, one file per
+install shape:
+
+| File | Contents | Used by |
+| --- | --- | --- |
+| `base.txt` | Runtime only | `deploy/install.sh` on a host with no GPIO |
+| `rpi.txt` | Runtime and the hardware backend | `deploy/install.sh` on a Pi |
+| `dev.txt` | Runtime and the tooling | CI, and a development checkout |
+
+After changing a dependency in `pyproject.toml`, regenerate them:
+
+```sh
+requirements/refresh.sh
+```
+
+That keeps every version already pinned and moves only what the change forces, so
+editing one dependency does not drag the whole tree forward. To move the tree on
+purpose — picking up upstream fixes — pass the flag through:
+
+```sh
+requirements/refresh.sh --upgrade
+```
+
+CI runs the same script and fails if the result differs from what is committed, which
+is what stops the lockfiles from quietly ceasing to describe the project.

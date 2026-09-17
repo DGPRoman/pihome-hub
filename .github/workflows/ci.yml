@@ -32,7 +32,13 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install
-        run: pip install -e '.[dev]'
+        # From the lockfile, with hashes, so what CI proves is a specific set of
+        # transitive versions rather than whatever resolved that morning. --no-deps
+        # on the package: its dependencies are pinned above, and without it pip is
+        # free to re-resolve and undo the lock.
+        run: |
+          pip install --require-hashes --requirement requirements/dev.txt
+          pip install -e . --no-deps
 
       - name: Format check
         run: ruff format --check --diff .
@@ -81,6 +87,29 @@ jobs:
           fi
           echo "Unit file is valid."
 
+  lockfile:
+    name: Lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Check the lockfiles match pyproject.toml
+        # A lockfile nobody regenerates is a lockfile that quietly stops describing
+        # the project. Recompiling without --upgrade keeps the existing pins as
+        # preferences, so this only moves when pyproject.toml has actually changed.
+        # Running the same script a developer runs, rather than a second copy of the
+        # commands: two spellings of the same compile differ in the command line uv
+        # records at the top of each file, and the check fails on that alone.
+        run: |
+          requirements/refresh.sh
+          if ! git diff --exit-code -- requirements/; then
+            echo "::error::requirements/ is out of date — run requirements/refresh.sh"
+            exit 1
+          fi
+          echo "Lockfiles are current."
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -100,7 +129,13 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install
-        run: pip install -e '.[dev]'
+        # From the lockfile, with hashes, so what CI proves is a specific set of
+        # transitive versions rather than whatever resolved that morning. --no-deps
+        # on the package: its dependencies are pinned above, and without it pip is
+        # free to re-resolve and undo the lock.
+        run: |
+          pip install --require-hashes --requirement requirements/dev.txt
+          pip install -e . --no-deps
 
       - name: Test
         run: pytest

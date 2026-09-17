@@ -120,9 +120,27 @@ files = ["src", "tests"]
 module = ["gpiozero.*"]
 ignore_missing_imports = true
 
+[tool.uv]
+# The lockfiles are only reproducible against the resolver that produced them:
+# different uv versions annotate a resolution differently, which shows up as the
+# lockfile check failing on files whose pins are byte-identical. Declared here
+# rather than in the workflow because uv enforces it for a developer too, and
+# setup-uv reads it — so CI and a checkout cannot drift apart silently. Moving it
+# is deliberate: bump this line and run requirements/refresh.sh in the same commit.
+required-version = "==0.12.10"
+
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # starlette's testclient module reads anyio.abc.BlockingPortal in its module body,
+  # an alias anyio 4.15 deprecated. It fires at import, before any test runs, so
+  # "error" turns it into a collection failure that takes the whole session down —
+  # and no change here avoids it: starlette 1.6.0 is the newest release and still
+  # does it. Scoped to the one message, so every other deprecation, this project's
+  # included, stays an error. Remove once starlette uses anyio.from_thread.
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]

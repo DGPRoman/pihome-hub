@@ -58,7 +58,8 @@ cd pihome-hub
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install --require-hashes -r requirements/dev.txt
+pip install -e . --no-deps
 
 cp .env.example .env
 # Generate the two keys the service needs:
@@ -71,7 +72,13 @@ PIHOME_DOCS_ENABLED=true pihome-hub
 Then `curl http://127.0.0.1:5002/health`, and open <http://127.0.0.1:5002/docs> for the
 API browser.
 
-On a Raspberry Pi, add the hardware extra: `pip install -e '.[rpi]'`.
+On a Raspberry Pi, use `requirements/rpi.txt` instead — same two commands, the
+hardware backend included.
+
+Dependencies come from `requirements/`, not from resolving `pyproject.toml` afresh:
+the direct pins there leave transitive versions floating, so two installs a month
+apart can differ, and on a Pi rebuilt rarely that difference arrives as a deployment
+behaving unlike CI. See [CONTRIBUTING.md](CONTRIBUTING.md#dependencies) to change one.
 
 ## Development
 
