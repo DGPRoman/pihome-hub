@@ -120,6 +120,15 @@ files = ["src", "tests"]
 module = ["gpiozero.*"]
 ignore_missing_imports = true
 
+[tool.uv]
+# The lockfiles are only reproducible against the resolver that produced them:
+# different uv versions annotate a resolution differently, which shows up as the
+# lockfile check failing on files whose pins are byte-identical. Declared here
+# rather than in the workflow because uv enforces it for a developer too, and
+# setup-uv reads it — so CI and a checkout cannot drift apart silently. Moving it
+# is deliberate: bump this line and run requirements/refresh.sh in the same commit.
+required-version = "==0.12.10"
+
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
