@@ -22,6 +22,7 @@ from pihome_hub.accounts.passwords import (
     dummy_verify,
     hash_password,
     needs_rehash,
+    rehash_password,
     verify_password,
 )
 from pihome_hub.storage import connect, writing
@@ -93,13 +94,25 @@ class UserStore:
 
         if needs_rehash(row["password_hash"]):
             # A login is the one moment the plaintext is in hand, so it is the only
-            # moment a stronger hash can be computed without asking anyone. A write
-            # failure here is not swallowed: it means the state directory has gone
-            # read-only, which is worth hearing about now rather than later.
+            # moment a stronger hash can be computed without asking anyone.
+            #
+            # Hashed before the transaction opens, not inside it. scrypt is slow by
+            # construction — that is the entire point of it — and computing it as an
+            # argument to execute() held the write lock open for the whole
+            # derivation, blocking every other writer behind one login. create()
+            # already hashes outside its transaction; this now matches.
+            #
+            # rehash_password, not hash_password: the password is already this
+            # account's, and a minimum that rose since it was set must not turn a
+            # correct password into an error.
+            upgraded = rehash_password(password)
+
+            # A write failure here is not swallowed: it means the state directory has
+            # gone read-only, which is worth hearing about now rather than later.
             with writing(self._path) as connection:
                 connection.execute(
                     "UPDATE users SET password_hash = ? WHERE id = ?",
-                    (hash_password(password), row["id"]),
+                    (upgraded, row["id"]),
                 )
 
         return _to_user(row)

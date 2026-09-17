@@ -79,10 +79,29 @@ def hash_password(password: str) -> str:
     """Hash ``password`` for storage, returning a self-describing string.
 
     The strength check lives here rather than at the call site deliberately: this is
-    the one point every password in the system passes through, and a rule enforced
+    the one point every password being *chosen* passes through, and a rule enforced
     anywhere else is a rule the next caller can skip without noticing.
     """
     _check_strength(password)
+    return rehash_password(password)
+
+
+def rehash_password(password: str) -> str:
+    """Hash a password that is already someone's, with the current parameters.
+
+    Deliberately no strength check, and named so that using it by accident is hard.
+    It is not applied to a password being chosen but to one already in use, at a
+    login, and the minimum may have risen since that login was last possible.
+
+    Checking here had two ways to be wrong and no way to be right. It locked the
+    account out — a *correct* password raised WeakPasswordError out of
+    ``authenticate`` — which is what :func:`verify_password` promises does not
+    happen. Skipping the rehash instead would leave exactly the accounts with the
+    weakest passwords on the weakest KDF parameters, which is backwards.
+
+    The minimum is enforced where a password is set, which is where it can be
+    acted on.
+    """
     salt = secrets.token_bytes(_SALT_BYTES)
     return _encode(_CURRENT, salt, _derive(password, salt, _CURRENT, _KEY_BYTES))
 

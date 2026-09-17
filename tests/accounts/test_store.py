@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,7 +25,8 @@ from pihome_hub.accounts import (
     needs_rehash,
 )
 from pihome_hub.accounts import store as store_module
-from pihome_hub.storage import connect, prepare_database
+from pihome_hub.accounts.passwords import rehash_password
+from pihome_hub.storage import connect, prepare_database, writing
 
 PASSWORD = "correct-horse-battery"
 OTHER_PASSWORD = "battery-staple-horse"
@@ -126,23 +130,75 @@ class TestAuthenticate:
 
 
 class TestAuthenticateUpgradesAnOldHash:
+    @pytest.mark.parametrize(
+        "password",
+        [
+            pytest.param(PASSWORD, id="meets the current minimum"),
+            # Eight characters: legal when it was set, below the minimum of twelve
+            # this build enforces. An account can only be in this state by having
+            # existed across the change, which is exactly the account the rehash
+            # exists to upgrade.
+            pytest.param("short123", id="predates a raised minimum"),
+        ],
+    )
     def test_a_hash_at_weaker_parameters_is_replaced_on_login(
-        self, store: UserStore, tmp_path: Path
+        self, store: UserStore, tmp_path: Path, password: str
     ) -> None:
         """A login is the one moment the plaintext is in hand."""
         store.create("roman", PASSWORD, Role.ADMIN)
-        _downgrade_hash(tmp_path / "hub.db", "roman")
+        _downgrade_hash(tmp_path / "hub.db", "roman", password)
 
         with connect(tmp_path / "hub.db") as connection:
             stored = connection.execute("SELECT password_hash FROM users").fetchone()[0]
         assert needs_rehash(stored), "the fixture failed to weaken anything"
 
-        assert store.authenticate("roman", PASSWORD) is not None
+        # The short case used to raise WeakPasswordError here — out of a login, on
+        # a correct password — which verify_password explicitly promises cannot
+        # happen: "an account whose password predates a raised minimum must still
+        # be able to log in and change it".
+        assert store.authenticate("roman", password) is not None
 
         with connect(tmp_path / "hub.db") as connection:
             upgraded = connection.execute("SELECT password_hash FROM users").fetchone()[0]
-        assert not needs_rehash(upgraded)
+        assert not needs_rehash(upgraded), (
+            "the weakest passwords must not be left on the weakest parameters"
+        )
+        assert store.authenticate("roman", password) is not None
+
+    def test_the_password_is_hashed_before_the_write_transaction_opens(
+        self, store: UserStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """scrypt is slow on purpose, so where it runs decides who waits behind it.
+
+        Computed as an argument to execute(), the derivation ran with the write
+        lock held, and every other writer queued behind one login. create() already
+        hashes outside its transaction; this asserts authenticate() does too.
+        """
+        store.create("roman", PASSWORD, Role.ADMIN)
+        _downgrade_hash(tmp_path / "hub.db", "roman")
+
+        events: list[str] = []
+
+        def recording_rehash(password: str) -> str:
+            events.append("hashed")
+            return rehash_password(password)
+
+        @contextmanager
+        def recording_writing(path: Path) -> Iterator[sqlite3.Connection]:
+            events.append("transaction opened")
+            with writing(path) as connection:
+                yield connection
+            events.append("transaction closed")
+
+        # Named as paths: store.py binds both with a plain `from ... import`, which
+        # strict mode reads as not exported, so reaching them through the module
+        # object does not type-check.
+        monkeypatch.setattr("pihome_hub.accounts.store.rehash_password", recording_rehash)
+        monkeypatch.setattr("pihome_hub.accounts.store.writing", recording_writing)
+
         assert store.authenticate("roman", PASSWORD) is not None
+
+        assert events == ["hashed", "transaction opened", "transaction closed"]
 
 
 class TestListingAndFetching:
@@ -304,11 +360,16 @@ class TestTwoWritersAtOnce:
         assert isinstance(failures[0], LastAdminError)
 
 
-def _downgrade_hash(path: Path, username: str) -> None:
-    """Replace a stored hash with one an older build would have written."""
+def _downgrade_hash(path: Path, username: str, password: str = PASSWORD) -> None:
+    """Replace a stored hash with one an older build would have written.
+
+    ``password`` is a parameter because the interesting case is one that would be
+    refused today. Hard-coding the fixture's long password meant the rehash test
+    could never reach the branch it exists for.
+    """
     salt = b"0123456789abcdef"
     key = hashlib.scrypt(
-        PASSWORD.encode("utf-8"), salt=salt, n=1024, r=8, p=1, dklen=32, maxmem=64 * 1024**2
+        password.encode("utf-8"), salt=salt, n=1024, r=8, p=1, dklen=32, maxmem=64 * 1024**2
     )
     weaker = "$".join(
         (
