@@ -84,6 +84,15 @@ class DeviceSnapshot(BaseModel):
     #: Reported rather than hidden, so a dead sensor looks dead instead of looking
     #: like a room that stopped moving.
     stale: bool
+    #: The window ``stale`` was decided against, in seconds.
+    #:
+    #: Sent so a client can judge a single quantity for itself. ``stale`` is one
+    #: flag for the whole device, decided from ``last_seen``, which is bumped by
+    #: any reading — so a device pushing temperature every minute reports
+    #: ``stale: false`` while its motion reading is hours old. Without the window
+    #: a client has no sound way to tell that, because knowing the device is not
+    #: stale bounds the window from below and not from above.
+    stale_after_seconds: float
     last_seen: datetime | None = None
     motion: bool | None = None
     motion_updated_at: datetime | None = None

@@ -113,6 +113,17 @@ class TestStaleness:
         assert snapshot.stale is True
         assert snapshot.motion is False, "the value is still reported, just flagged"
 
+    def test_the_window_is_reported_alongside_the_flag(self, store: SensorStore) -> None:
+        """A client cannot judge one quantity from the device-wide flag alone.
+
+        ``stale`` is decided from ``last_seen``, which any reading bumps, so a
+        device pushing climate every minute reports ``stale: False`` while its
+        motion is hours old. Knowing the device is not stale bounds the window
+        from below and not from above, so the number has to be sent.
+        """
+        assert store.snapshot("porch-motion").stale_after_seconds == 300.0
+        assert store.snapshot("hallway-climate").stale_after_seconds == 600.0
+
     def test_each_device_uses_its_own_window(self, store: SensorStore, clock: FakeClock) -> None:
         store.record("porch-motion", SensorReading(motion=True))
         store.record("hallway-climate", SensorReading(temperature=21.0))
