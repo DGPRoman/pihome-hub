@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements/*.txt
 
       - name: Install
         # From the lockfile, with hashes, so what CI proves is a specific set of
@@ -126,7 +126,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements/*.txt
 
       - name: Install
         # From the lockfile, with hashes, so what CI proves is a specific set of
@@ -152,7 +152,7 @@ jobs:
           # extra actually gets installed.
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements/*.txt
 
       - name: Install SWIG
         # lgpio publishes no wheels at all, only an sdist that builds a SWIG
@@ -163,10 +163,13 @@ jobs:
           sudo apt-get install --yes --no-install-recommends swig
 
       - name: Install
-        # What deploy/install.sh installs on the deployment target. Every other leg
-        # installs '.[dev]', so until this one existed nothing in CI ever imported
-        # relays/gpio.py — it had neither runtime nor type verification.
-        run: pip install -e '.[dev,rpi]'
+        # The hardware extra, which deploy/install.sh installs on the deployment
+        # target. Every other leg installs without it, so until this one existed
+        # nothing in CI ever imported relays/gpio.py — it had neither runtime nor
+        # type verification.
+        run: |
+          pip install --require-hashes --requirement requirements/dev-rpi.txt
+          pip install -e . --no-deps
 
       - name: Test
         run: pytest

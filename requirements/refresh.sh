@@ -17,16 +17,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-for spec in "base:" "rpi:--extra=rpi" "dev:--extra=dev"; do
-    name=${spec%%:*}
-    extra=${spec#*:}
+passthrough=("$@")
+
+compile_lock() {
+    name=$1
+    shift
     echo "compiling requirements/$name.txt"
     uv pip compile --universal --generate-hashes --quiet \
         --python-version 3.11 \
-        ${extra:+"$extra"} \
-        --output-file "requirements/$name.txt" \
         "$@" \
+        --output-file "requirements/$name.txt" \
+        ${passthrough[@]+"${passthrough[@]}"} \
         pyproject.toml
-done
+}
+
+compile_lock base
+compile_lock rpi --extra=rpi
+compile_lock dev --extra=dev
+compile_lock dev-rpi --extra=dev --extra=rpi
 
 echo "done"
