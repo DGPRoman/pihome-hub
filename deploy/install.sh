@@ -60,13 +60,13 @@ $GPIO_GROUP) or drop SupplementaryGroups= if there is no GPIO to reach."
 gpio_chips=(/dev/gpiochip*)
 if [[ -e /dev/gpiochip0 ]]; then
     backend=gpiozero
-    extras='[rpi]'
+    lockfile='requirements/rpi.txt'
 elif [[ -e ${gpio_chips[0]} ]]; then
     die "this host has GPIO chips but no /dev/gpiochip0, the only one $UNIT_NAME
 allows. Point DeviceAllow= at yours: ${gpio_chips[*]}"
 else
     backend=mock
-    extras=''
+    lockfile='requirements/base.txt'
 fi
 
 say "installing from $REPO_ROOT with the $backend backend"
@@ -87,10 +87,17 @@ if [[ ! -x $VENV/bin/pip ]]; then
     python3 -m venv "$VENV"
 fi
 
+# Dependencies come from the lockfile, with hashes, so a Pi rebuilt months after
+# CI last ran gets the set CI tested rather than whatever resolves that day.
+# --no-deps on the package itself: everything it needs is already pinned above, and
+# without it pip is free to re-resolve and undo the lock.
+say "installing dependencies from $lockfile"
+"$VENV/bin/pip" install --quiet --require-hashes --requirement "$REPO_ROOT/$lockfile"
+
 # Installed, not linked with -e, so pip byte-compiles once here rather than the
 # service recompiling on every start against a read-only filesystem.
 say "installing the package into $VENV"
-"$VENV/bin/pip" install --quiet --upgrade "$REPO_ROOT$extras"
+"$VENV/bin/pip" install --quiet --upgrade --no-deps "$REPO_ROOT"
 
 # -- Configuration -----------------------------------------------------------
 
