@@ -137,7 +137,13 @@ implicit_reexport = true
 # call on that ground alone. Silencing the category here rather than the whole file
 # keeps what following the import was for: argument names, arity and attribute
 # existence are still checked against the real library.
-module = ["pihome_hub.relays.gpio"]
+#
+# The test module is listed for the same reason and no other: it drives MockFactory
+# and its pins directly, which is the point of it. Both entries only bite where
+# gpiozero is installed — without it there is nothing to follow into and every call
+# is Any — which is why each of these changes was green on its own branch and the
+# pair was not.
+module = ["pihome_hub.relays.gpio", "tests.relays.test_gpio_backend"]
 disallow_untyped_calls = false
 
 [tool.uv]
