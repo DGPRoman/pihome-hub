@@ -174,9 +174,10 @@ re-reads the account rather than trusting what was true when it was opened. A pa
 change is the one that has to be said out loud, which is why `passwd` ends the sessions
 itself.
 
-**Nothing logs in over HTTP yet.** Accounts and sessions are stored, and both can be
-managed on the Pi; the endpoints that issue and accept a session are the next piece of
-work.
+**A session does not yet open any other route.** Logging in over HTTP works — `/v1/session`
+issues, reports and clears the cookie — but the rest of `/v1` still authenticates by API
+key alone and does not consult the role the session carries. Until it does, the cookie
+proves who you are without deciding what you may do.
 
 ## API
 
@@ -392,8 +393,9 @@ tests/                 runs without hardware, against the mock backend
 | 7 | Accounts, roles and sessions | in progress |
 
 Phase 7 is what unblocks the [web client's](https://github.com/DGPRoman/pihome-hub-web)
-own roadmap. Storage, password hashing, the user store and `pihome-hub-admin` are in
-place; the session endpoints and role enforcement are not yet.
+own roadmap. Storage, password hashing, the user store, `pihome-hub-admin` and the
+session endpoints are in place; what is left is enforcing the role those sessions carry
+on the rest of `/v1`, which still takes an API key.
 
 ## License
 
