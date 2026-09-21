@@ -148,6 +148,31 @@ class TestDrivingThePin:
 
         assert pins.pin(17).function == "input"
 
+    def test_close_actually_closes_the_device(
+        self, pins: MockFactory, backend: GpioZeroRelayBackend
+    ) -> None:
+        """Released, not merely dropped.
+
+        ``test_close_releases_the_pin`` above passes even if close() only removes
+        the device from the dict: that drops the last reference, CPython collects
+        it immediately, and gpiozero's finaliser closes the pin. The pin ends up
+        free either way, so the assertion cannot tell the two apart.
+
+        The difference is real. Leaving a GPIO pin to the garbage collector means
+        a relay is released when the interpreter gets round to it — which is not a
+        promise CPython's refcounting makes on behalf of every runtime, and not one
+        to make about a mains circuit. Holding a reference here is what stops the
+        collector from hiding the question.
+        """
+        backend.setup_output(17, active_low=True, initial=True)
+        # Reaching into the backend deliberately: holding this reference is what
+        # stops the collector from closing the device on close()'s behalf.
+        device = backend._devices[17]
+
+        backend.close(17)
+
+        assert device.closed is True
+
     def test_close_is_safe_on_a_pin_that_was_never_claimed(
         self, pins: MockFactory, backend: GpioZeroRelayBackend
     ) -> None:

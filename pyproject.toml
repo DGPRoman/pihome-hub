@@ -143,7 +143,11 @@ implicit_reexport = true
 # gpiozero is installed — without it there is nothing to follow into and every call
 # is Any — which is why each of these changes was green on its own branch and the
 # pair was not.
-module = ["pihome_hub.relays.gpio", "tests.relays.test_gpio_backend"]
+module = [
+  "pihome_hub.relays.gpio",
+  "tests.relays.test_gpio_backend",
+  "tests.relays.test_backend_contract",
+]
 disallow_untyped_calls = false
 
 [tool.uv]
