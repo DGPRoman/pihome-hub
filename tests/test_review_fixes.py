@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from pihome_hub.app import create_app
 from pihome_hub.logging import configure_logging
 from pihome_hub.ratelimit import FailureLimiter
-from pihome_hub.relays import RelayHardwareError, RelayService
+from pihome_hub.relays import RelayService, RelayServiceClosedError
 from tests.conftest import RELAY_HEADERS, SENSOR_HEADERS, build_relay_service, build_settings
 
 
@@ -178,8 +178,10 @@ class TestRelayServiceOwnership:
             service: RelayService = app.state.relays
 
         assert app.state.relays is None, "shutdown left a closed service on app.state"
-        # RelayHardwareError rather than the backend's own RuntimeError: a write that
-        # fails mid-run is now translated at the service boundary, as one at startup
-        # already was. The cause is still in the message.
-        with pytest.raises(RelayHardwareError, match="setup_output"):
+        assert service.closed is True
+        # RelayServiceClosedError, and raised before the backend is touched. This
+        # used to reach the pin and come back as a hardware error naming
+        # setup_output, which sent the reader to check the wiring for what is a
+        # lifecycle mistake in the caller.
+        with pytest.raises(RelayServiceClosedError):
             service.turn_on("porch-light")

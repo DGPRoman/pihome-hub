@@ -13,6 +13,7 @@ from pihome_hub.relays.errors import (
     RelayConfigError,
     RelayError,
     RelayHardwareError,
+    RelayServiceClosedError,
     UnknownRelayError,
 )
 from pihome_hub.relays.mock import MockRelayBackend
@@ -27,6 +28,7 @@ __all__ = [
     "RelayError",
     "RelayHardwareError",
     "RelayService",
+    "RelayServiceClosedError",
     "UnknownRelayError",
     "load_relays",
 ]

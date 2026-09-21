@@ -103,6 +103,27 @@ class TestPrepareDatabase:
 
         assert target.stat().st_mode & 0o777 == 0o600
 
+    def test_a_chmod_that_fails_is_a_storage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A database file owned by another account — the exact case the wrong-user
+        check exists to catch — used to escape as a raw PermissionError.
+
+        It is the one statement in prepare_database outside the guard, so it went
+        past every ``except StorageError`` in main() as a traceback with an exit code
+        the unit retries. Provoked by patching rather than by chown, because the
+        suite does not run as root and the case is about a file it cannot own.
+        """
+        target = tmp_path / "hub.db"
+
+        def refuse(self: Path, mode: int) -> None:
+            raise PermissionError(13, "Operation not permitted")
+
+        monkeypatch.setattr(Path, "chmod", refuse)
+
+        with pytest.raises(DatabaseUnavailableError, match="permissions"):
+            prepare_database(target)
+
     def test_running_it_twice_changes_nothing(self, tmp_path: Path) -> None:
         """Every start calls this, so it has to be safe on an existing database."""
         target = tmp_path / "hub.db"

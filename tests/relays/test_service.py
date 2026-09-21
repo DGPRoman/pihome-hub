@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from pihome_hub.relays import (
@@ -9,6 +11,7 @@ from pihome_hub.relays import (
     RelayConfig,
     RelayConfigError,
     RelayService,
+    RelayServiceClosedError,
     UnknownRelayError,
 )
 
@@ -130,5 +133,80 @@ class TestClose:
 
         service.close()
 
+        assert backend.claimed == frozenset()
         with pytest.raises(RuntimeError, match="setup_output"):
             backend.write(porch.pin, on=True)
+
+    def test_a_second_close_does_nothing_at_all(
+        self, backend: MockRelayBackend, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Three callers release a service — __main__'s finally, the lifespan's owned
+        branch, and the self-call that unwinds a part-way startup — so only their
+        current ordering kept the second one from writing to a released pin.
+
+        It came back as "failed to drive relay to its shutdown state", with a
+        RuntimeError about setup_output underneath: a hardware fault during shutdown,
+        reported when nothing whatever is wrong. Asserted on log records rather than
+        on state, because the second close leaves the relay exactly where the first
+        one put it and the complaint is the only trace it leaves.
+        """
+        relay = RelayConfig(
+            id="porch-light", pin=17, label="Porch", initial_state="on", shutdown_state="off"
+        )
+        service = RelayService(backend, [relay])
+        service.close()
+        assert backend.is_on(relay.pin) is False, "the first close did nothing to assert about"
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="pihome_hub.relays.service"):
+            service.close()
+
+        assert caplog.records == []
+
+    def test_close_is_reported_once_it_has_run(
+        self, backend: MockRelayBackend, porch: RelayConfig
+    ) -> None:
+        service = RelayService(backend, [porch])
+        assert service.closed is False
+
+        service.close()
+
+        assert service.closed is True
+
+    def test_driving_a_closed_service_says_so(
+        self, backend: MockRelayBackend, porch: RelayConfig
+    ) -> None:
+        """Not a hardware error. The pins are gone; the wiring is fine."""
+        service = RelayService(backend, [porch])
+        service.close()
+
+        with pytest.raises(RelayServiceClosedError, match="closed"):
+            service.turn_on(porch.id)
+
+    @pytest.mark.parametrize("operation", ["turn_on", "turn_off", "toggle"])
+    def test_every_write_refuses_once_closed(
+        self, backend: MockRelayBackend, porch: RelayConfig, operation: str
+    ) -> None:
+        service = RelayService(backend, [porch])
+        service.close()
+
+        with pytest.raises(RelayServiceClosedError):
+            getattr(service, operation)(porch.id)
+
+    def test_reading_still_works_and_reports_the_last_state_set(
+        self, backend: MockRelayBackend
+    ) -> None:
+        """Documented rather than forbidden: shutdown logging and diagnostics run at
+        exactly this moment, and raising there would replace a plain answer with a
+        traceback. `closed` is how a caller learns not to trust it."""
+        relay = RelayConfig(
+            id="porch-light", pin=17, label="Porch", initial_state="off", shutdown_state="off"
+        )
+        service = RelayService(backend, [relay])
+        service.turn_on(relay.id)
+
+        service.close()
+
+        assert service.status() == {"porch-light": False}
+        assert service.state_of("porch-light") is False
+        assert service.closed is True

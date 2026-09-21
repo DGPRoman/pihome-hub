@@ -49,3 +49,14 @@ class MockRelayBackend:
     def is_on(self, pin: int) -> bool:
         """Test helper: the logical level this backend last recorded for ``pin``."""
         return self._levels.get(pin, False)
+
+    @property
+    def claimed(self) -> frozenset[int]:
+        """Test helper: the pins currently held as outputs.
+
+        The real backend's equivalent is a file descriptor on a GPIO character
+        device, which the kernel takes back when the process ends. That is the
+        reason releasing has to be observable here and not only inferred from a
+        clean exit: a leak looks exactly like a tidy shutdown from outside.
+        """
+        return frozenset(self._claimed)

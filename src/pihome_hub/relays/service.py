@@ -12,7 +12,12 @@ import threading
 from collections.abc import Iterable, Mapping
 
 from pihome_hub.relays.backend import RelayBackend
-from pihome_hub.relays.errors import RelayConfigError, RelayHardwareError, UnknownRelayError
+from pihome_hub.relays.errors import (
+    RelayConfigError,
+    RelayHardwareError,
+    RelayServiceClosedError,
+    UnknownRelayError,
+)
 from pihome_hub.relays.models import RelayConfig
 
 logger = logging.getLogger(__name__)
@@ -25,6 +30,11 @@ class RelayService:
         self._backend = backend
         self._relays: dict[str, RelayConfig] = {}
         self._state: dict[str, bool] = {}
+        #: Set once close() has run. Three callers release this service — __main__'s
+        #: finally, the lifespan's owned branch, and the self-call that unwinds a
+        #: part-way startup — and only their current ordering kept a second close
+        #: from writing to a pin that had already been given back.
+        self._closed = False
         # Route handlers are sync `def`, so Starlette runs them in a threadpool.
         # `toggle` is a read-modify-write over shared state: two concurrent toggles
         # of one relay would both observe the old value and both write the same new
@@ -84,9 +94,17 @@ class RelayService:
         except KeyError:
             raise UnknownRelayError(relay_id) from None
 
+    @property
+    def closed(self) -> bool:
+        """True once :meth:`close` has run. The pins are gone and will not return."""
+        with self._lock:
+            return self._closed
+
     def _set(self, relay_id: str, *, on: bool) -> bool:
         relay = self._require(relay_id)
         with self._lock:
+            if self._closed:
+                raise RelayServiceClosedError(relay.id)
             try:
                 self._backend.write(relay.pin, on=on)
             except Exception as exc:
@@ -115,11 +133,23 @@ class RelayService:
             return self._set(relay.id, on=not self._state[relay.id])
 
     def status(self) -> Mapping[str, bool]:
+        """The logical state this process last set for each relay.
+
+        Still answers after :meth:`close`, and then it is a record rather than a
+        reading: the pins have been released and the board is following its own idle
+        level, so the last value driven may no longer be the truth. Reading is left
+        working on purpose — shutdown logging and diagnostics run at exactly that
+        moment, and raising there would replace a plain answer with a traceback.
+        Callers that need to know can ask :attr:`closed`.
+        """
         with self._lock:
             return dict(self._state)
 
     def state_of(self, relay_id: str) -> bool:
-        """Current logical state of one relay. Raises for an unknown id."""
+        """Current logical state of one relay. Raises for an unknown id.
+
+        Subject to the same caveat as :meth:`status` once the service is closed.
+        """
         relay = self._require(relay_id)
         with self._lock:
             return self._state[relay.id]
@@ -168,8 +198,16 @@ class RelayService:
         Releasing a pin returns it to an input with no pull, so the relay ends up
         following the board's idle level once this process is gone — driving a state
         here governs the window before that, not the state afterwards.
+
+        Idempotent. The second call must not reach the backend: writing to a pin that
+        has already been given back raises from the backend and is logged as a
+        failure to drive a relay, which reads as a hardware fault during shutdown
+        when nothing at all is wrong.
         """
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             for relay in self._relays.values():
                 if relay.id not in self._state:
                     # Never successfully claimed — nothing to drive or release. This

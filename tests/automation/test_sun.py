@@ -10,7 +10,12 @@ import pytest
 from astral import Observer
 from astral.sun import sun as astral_sun
 
-from pihome_hub.automation import Location, SunClock
+from pihome_hub.automation import (
+    AutomationConfigError,
+    AutomationError,
+    Location,
+    SunClock,
+)
 
 # Kyiv in high summer: sunrise around 04:50, sunset around 21:10 local (UTC+3).
 KYIV = Location(latitude=50.4501, longitude=30.5234, timezone="Europe/Kyiv")
@@ -98,5 +103,13 @@ class TestCaching:
 
 class TestConfiguration:
     def test_an_unknown_timezone_is_rejected_with_a_useful_message(self) -> None:
-        with pytest.raises(ValueError, match="IANA"):
+        with pytest.raises(AutomationConfigError, match="IANA"):
+            SunClock(Location(latitude=0.0, longitude=0.0, timezone="Mars/Olympus"))
+
+    def test_an_unknown_timezone_is_a_configuration_error_and_not_a_bare_value_error(
+        self,
+    ) -> None:
+        """main() catches the domain base classes. A ValueError from here went past
+        all of them as a traceback, with an exit code the unit retries forever."""
+        with pytest.raises(AutomationError):
             SunClock(Location(latitude=0.0, longitude=0.0, timezone="Mars/Olympus"))

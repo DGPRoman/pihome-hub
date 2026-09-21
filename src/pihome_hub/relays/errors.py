@@ -19,6 +19,24 @@ class RelayConfigError(RelayError):
     """Raised when relay configuration is missing, malformed, or internally inconsistent."""
 
 
+class RelayServiceClosedError(RelayError):
+    """Raised when something tries to drive a relay after the service has shut down.
+
+    Distinct from a hardware error, which it would otherwise be reported as. The
+    pins are released and the board is following its own idle level; a write now is
+    a lifecycle mistake in the caller, not a fault in the wiring, and sending
+    somebody to check the supply would waste their evening.
+    """
+
+    def __init__(self, relay_id: str) -> None:
+        super().__init__(
+            f"the relay service is closed; cannot drive relay {relay_id!r}. "
+            "Its pins have been released and it is not coming back — build a new "
+            "service if the process is still meant to be running."
+        )
+        self.relay_id = relay_id
+
+
 #: What to suggest, by what the service was trying to do when it failed.
 #:
 #: The two moments have nothing useful in common. At startup the likely causes are

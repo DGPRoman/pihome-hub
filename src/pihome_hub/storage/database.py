@@ -104,5 +104,18 @@ def prepare_database(path: Path) -> int:
     # The unit's UMask=0077 already gets this right, and the state directory it is
     # in is 0700. Set it anyway: the file holds password hashes, both of those are
     # one edit away from being widened, and a development run has neither.
-    path.chmod(0o600)
+    #
+    # Guarded, because this is the one statement here that can fail on a file the
+    # service does not own — which is precisely the situation the wrong-user check
+    # exists to catch. Unguarded it escaped past every `except StorageError` as a
+    # raw PermissionError.
+    try:
+        path.chmod(0o600)
+    except OSError as exc:
+        msg = (
+            f"could not restrict permissions on the database at {path}: {exc}. "
+            "It holds password hashes, so the service will not run with it readable "
+            "by other accounts. Check who owns the file and the state directory."
+        )
+        raise DatabaseUnavailableError(msg) from exc
     return version
