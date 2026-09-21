@@ -201,6 +201,7 @@ of these:
 | --- | --- |
 | The reading carried no motion field | `handle_reading` ignores a reading whose `motion` is `null`. The recorded line shows `motion=None` |
 | The rule wants the other edge | `when: {motion: true}` fires on arrival, not on departure |
+| The reading repeated a value | A rule fires on a change. A sensor that reports on an interval only fires the first push of a run; the recorded line shows `rules_fired=[]` with the value unchanged |
 | It is not dark yet | Raise the log level and look for `rule skipped: not dark yet` |
 | The rule is disabled | `GET /v1/automation/rules` still lists it, with `"enabled":false` — a disabled rule is reported, not omitted |
 
@@ -212,6 +213,17 @@ A rule that fires logs `automation rule fired`, and a hold logs `automation hold
 when it reverts. Continued motion restarts the countdown rather than queueing a second
 timer, so a light stays on while someone is still there — one relay has at most one
 pending revert.
+
+## A light I switched by hand went back on its own
+
+It no longer should. A rule acts on a change, so a sensor repeating the value it already
+reported does not re-issue anything, and a write through `/v1/relays` releases the hold on
+that relay — logged as `automation hold released by an operator write`. If a light still
+moves on its own, it is a rule firing on a genuine transition, which the log will show as
+`automation rule fired` with the rule's id.
+
+`GET /v1/relays/{id}` carries `hold_expires_at`: non-null means a revert is scheduled and
+says when. Null right after you set a relay is correct — your write called the hold off.
 
 ## The web app shows nothing
 

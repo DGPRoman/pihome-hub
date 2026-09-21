@@ -46,14 +46,16 @@ class TestRecording:
     def test_motion_is_stored_with_its_own_timestamp(
         self, store: SensorStore, clock: FakeClock
     ) -> None:
-        snapshot = store.record("porch-motion", SensorReading(motion=True))
+        snapshot = store.record("porch-motion", SensorReading(motion=True)).snapshot
 
         assert snapshot.motion is True
         assert snapshot.motion_updated_at == clock.now
         assert snapshot.climate_updated_at is None
 
     def test_climate_is_stored_with_its_own_timestamp(self, store: SensorStore) -> None:
-        snapshot = store.record("hallway-climate", SensorReading(temperature=21.5, humidity=48.0))
+        snapshot = store.record(
+            "hallway-climate", SensorReading(temperature=21.5, humidity=48.0)
+        ).snapshot
 
         assert snapshot.temperature == 21.5
         assert snapshot.humidity == 48.0
@@ -68,14 +70,14 @@ class TestRecording:
         climate_at = clock.now
 
         clock.advance(120)
-        snapshot = store.record("porch-motion", SensorReading(motion=True))
+        snapshot = store.record("porch-motion", SensorReading(motion=True)).snapshot
 
         assert snapshot.climate_updated_at == climate_at
         assert snapshot.motion_updated_at == clock.now
 
     def test_a_partial_reading_leaves_other_values_alone(self, store: SensorStore) -> None:
         store.record("hallway-climate", SensorReading(temperature=21.5, humidity=48.0))
-        snapshot = store.record("hallway-climate", SensorReading(temperature=22.0))
+        snapshot = store.record("hallway-climate", SensorReading(temperature=22.0)).snapshot
 
         assert snapshot.temperature == 22.0
         assert snapshot.humidity == 48.0
@@ -100,7 +102,7 @@ class TestStaleness:
         assert snapshot.last_seen is None
 
     def test_a_fresh_reading_is_not_stale(self, store: SensorStore) -> None:
-        assert store.record("porch-motion", SensorReading(motion=True)).stale is False
+        assert store.record("porch-motion", SensorReading(motion=True)).snapshot.stale is False
 
     def test_a_reading_goes_stale_after_its_window(
         self, store: SensorStore, clock: FakeClock

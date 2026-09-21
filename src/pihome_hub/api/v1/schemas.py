@@ -19,6 +19,16 @@ class RelayState(BaseModel):
     id: str = Field(description="Stable identifier, as configured", examples=["porch-light"])
     label: str = Field(description="Human-readable name", examples=["Porch light"])
     on: bool = Field(description="True when the circuit is energised")
+    hold_expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When an automation hold is due to put this relay back, or null when "
+            "nothing is scheduled against it. Served so a client can show that a "
+            "state has a timer running against it rather than presenting it as "
+            "settled. A write to the relay cancels any hold on it, so this is "
+            "always null in the response to one."
+        ),
+    )
 
 
 class RelayStateRequest(BaseModel):

@@ -42,8 +42,18 @@ class TestListRelays:
         body = api.get("/v1/relays").json()
         assert body == {
             "relays": [
-                {"id": "porch-light", "label": "Porch light", "on": False},
-                {"id": "gate-light", "label": "Gate light", "on": False},
+                {
+                    "id": "porch-light",
+                    "label": "Porch light",
+                    "on": False,
+                    "hold_expires_at": None,
+                },
+                {
+                    "id": "gate-light",
+                    "label": "Gate light",
+                    "on": False,
+                    "hold_expires_at": None,
+                },
             ]
         }
 
@@ -55,7 +65,12 @@ class TestListRelays:
 class TestReadOneRelay:
     def test_returns_the_relay(self, api: TestClient) -> None:
         body = api.get("/v1/relays/porch-light").json()
-        assert body == {"id": "porch-light", "label": "Porch light", "on": False}
+        assert body == {
+            "id": "porch-light",
+            "label": "Porch light",
+            "on": False,
+            "hold_expires_at": None,
+        }
 
     def test_unknown_relay_is_a_404(self, api: TestClient) -> None:
         response = api.get("/v1/relays/ghost-relay")

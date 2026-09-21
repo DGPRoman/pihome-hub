@@ -161,6 +161,25 @@ schedules an asyncio task to revert. One pending revert per relay, keyed by rela
 second trigger replaces the first one's timer instead of racing it, so continued motion
 keeps a light on rather than queueing a queue of reverts.
 
+**Whose intent wins.** A rule fires on a transition, never on a repeat. The store reports
+what a reading replaced, because by the time the engine sees the reading the store has
+already overwritten it; a value that has not moved restarts the countdown and leaves the
+relay alone. That distinction is the whole difference between a house that assists and one
+that argues: a sensor reporting every few seconds would otherwise re-issue its command
+every few seconds, and no manual switch could outlive one heartbeat.
+
+The same question arises the other way round. A hold is a decision the rule made about a
+state it set; once the relay is somewhere else, reverting means applying the inverse of
+something no longer in force. So a write through `/v1/relays` releases any hold on that
+relay before it touches the hardware, and the revert re-checks the relay before acting.
+Both are needed: the release covers an operator who re-applies the value the rule chose,
+the check covers a change that reached the relay some other way.
+
+`release_hold` is the one method on the engine reachable from outside the event loop — the
+relay routes are sync `def`, so Starlette runs them in a worker thread. `Task.cancel` may
+only be called on the loop that owns the task, so each hold records its loop and the
+cancellation goes through `call_soon_threadsafe`.
+
 ## The hardware seam
 
 `RelayBackend` is a `Protocol` with four methods: `read_level`, `setup_output`, `write`,

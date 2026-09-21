@@ -72,6 +72,28 @@ def settings() -> Settings:
     return build_settings()
 
 
+class CountingRelayBackend(MockRelayBackend):
+    """A mock that also remembers every write it was asked to make.
+
+    State alone cannot tell a command that was issued from one that was not: a
+    relay already on, driven on again, looks identical afterwards. That difference
+    is the whole subject of automation's edge detection — a repeated reading that
+    re-issues the command overrides whatever an operator did in between, and the
+    only evidence is the write itself.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes: list[tuple[int, bool]] = []
+
+    def write(self, pin: int, *, on: bool) -> None:
+        super().write(pin, on=on)
+        self.writes.append((pin, on))
+
+    def writes_to(self, pin: int) -> list[bool]:
+        return [on for written_pin, on in self.writes if written_pin == pin]
+
+
 def build_relay_service(backend: MockRelayBackend | None = None) -> RelayService:
     """A two-relay service on a mock backend, matching config/relays.example.yaml."""
     return RelayService(

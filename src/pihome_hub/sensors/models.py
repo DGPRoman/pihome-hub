@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Final, Self
 
@@ -99,3 +100,23 @@ class DeviceSnapshot(BaseModel):
     temperature: float | None = None
     humidity: float | None = None
     climate_updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedReading:
+    """The outcome of one :meth:`~pihome_hub.sensors.store.SensorStore.record` call.
+
+    A plain dataclass rather than a model: nothing serialises it, and it is not
+    part of the API surface.
+
+    The snapshot alone cannot answer whether anything *changed*, and by the time a
+    reading reaches the automation engine the store has already overwritten what
+    came before it. Carrying the replaced value out of the store is the only point
+    at which that information still exists.
+    """
+
+    snapshot: DeviceSnapshot
+    #: Motion as the store held it immediately before this reading. ``None`` means
+    #: the device had never reported motion, which is not the same as it having
+    #: reported no motion.
+    previous_motion: bool | None
