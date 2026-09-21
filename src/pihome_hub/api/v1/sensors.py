@@ -80,10 +80,16 @@ def get_sensor(request: Request, device_id: str) -> DeviceSnapshot:
 )
 async def push_reading(request: Request, device_id: str, reading: SensorReading) -> Response:
     store = _store(request)
-    snapshot = store.record(device_id, reading)
+    recorded = store.record(device_id, reading)
 
     engine = _engine(request)
-    fired = await engine.handle_reading(device_id, reading) if engine is not None else []
+    # The store has already overwritten the previous value by now, so the engine is
+    # handed it explicitly. Without it a rule cannot tell a change from a repeat.
+    fired = (
+        await engine.handle_reading(device_id, reading, previous_motion=recorded.previous_motion)
+        if engine is not None
+        else []
+    )
 
     logger.info(
         "reading recorded",
@@ -93,7 +99,7 @@ async def push_reading(request: Request, device_id: str, reading: SensorReading)
             "temperature": reading.temperature,
             "humidity": reading.humidity,
             "rules_fired": fired,
-            "stale": snapshot.stale,
+            "stale": recorded.snapshot.stale,
         },
     )
     return Response(status_code=202)

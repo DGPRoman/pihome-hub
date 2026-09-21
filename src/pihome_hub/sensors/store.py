@@ -14,7 +14,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from pihome_hub.sensors.errors import SensorConfigError, UnknownDeviceError
-from pihome_hub.sensors.models import DeviceSnapshot, SensorDevice, SensorReading
+from pihome_hub.sensors.models import (
+    DeviceSnapshot,
+    RecordedReading,
+    SensorDevice,
+    SensorReading,
+)
 
 
 def _utc_now() -> datetime:
@@ -75,12 +80,18 @@ class SensorStore:
             climate_updated_at=state.climate_updated_at,
         )
 
-    def record(self, device_id: str, reading: SensorReading) -> DeviceSnapshot:
-        """Store a reading. Raises :class:`UnknownDeviceError` for an undeclared device."""
+    def record(self, device_id: str, reading: SensorReading) -> RecordedReading:
+        """Store a reading. Raises :class:`UnknownDeviceError` for an undeclared device.
+
+        Returns the value each quantity replaced alongside the new snapshot. The
+        automation engine needs to know whether motion *changed*, and only the
+        store can say: the write below is what destroys the evidence.
+        """
         state = self._require(device_id)
         now = self._clock()
 
         with self._lock:
+            previous_motion = state.motion
             state.last_seen = now
             if reading.motion is not None:
                 state.motion = reading.motion
@@ -92,7 +103,9 @@ class SensorStore:
             if reading.has_climate:
                 state.climate_updated_at = now
 
-            return self._snapshot(state, now)
+            return RecordedReading(
+                snapshot=self._snapshot(state, now), previous_motion=previous_motion
+            )
 
     def snapshot(self, device_id: str) -> DeviceSnapshot:
         state = self._require(device_id)
