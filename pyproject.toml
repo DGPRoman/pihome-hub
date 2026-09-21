@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.31.0"]
+requires = ["hatchling==1.32.3"]
 build-backend = "hatchling.build"
 
 [project]
@@ -32,10 +32,10 @@ dependencies = [
   # zoneinfo, so no separate timezone dependency is needed.
   "astral==3.2",
   "fastapi==0.141.1",
-  "pydantic==2.13.4",
-  "pydantic-settings==2.14.2",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
   "PyYAML==6.0.3",
-  "uvicorn==0.52.0",
+  "uvicorn==0.53.0",
 ]
 
 [project.optional-dependencies]
@@ -48,11 +48,11 @@ rpi = [
 dev = [
   # Starlette's TestClient requires httpx2; the original httpx is deprecated for
   # this use and emits a warning that the suite treats as an error.
-  "httpx2==2.9.1",
-  "mypy==2.3.0",
+  "httpx2==2.13.0",
+  "mypy==2.3.1",
   "pytest==9.1.1",
-  "ruff==0.16.0",
-  "types-PyYAML==6.0.12.20260724",
+  "ruff==0.16.8",
+  "types-PyYAML==6.0.12.20260906",
 ]
 
 [project.scripts]
