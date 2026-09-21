@@ -22,6 +22,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import anyio.to_thread
+
 from pihome_hub.automation.errors import AutomationConfigError
 from pihome_hub.automation.models import AutomationRule
 from pihome_hub.automation.sun import DarknessOracle
@@ -186,21 +188,36 @@ class AutomationEngine:
                 )
                 continue
 
-            self._apply(rule)
+            await self._apply(rule)
             fired.append(rule.id)
 
         return fired
 
-    def _apply(self, rule: AutomationRule) -> None:
+    async def _drive(self, relay_id: str, *, on: bool) -> None:
+        """Set one relay, off the event loop.
+
+        Everything below :class:`RelayService` is synchronous and blocking — a
+        ``threading.RLock`` and then a write to a GPIO pin — and this is the only
+        caller that reaches it from the loop. The HTTP routes are sync ``def``, so
+        Starlette already runs them in its threadpool; ingestion is ``async def``
+        and awaits its way down to here, which put the lock and the bus on the
+        thread that serves every other connection.
+
+        Measured with the slow backend the concurrency tests already use: a single
+        relay write stalled the loop for 260 ms. Nothing about the mutual exclusion
+        is wrong — the question was only ever which thread pays for it.
+        """
+        await anyio.to_thread.run_sync(
+            self._relays.turn_on if on else self._relays.turn_off, relay_id
+        )
+
+    async def _apply(self, rule: AutomationRule) -> None:
         relay_id = rule.then.relay
         target = rule.then.turn_on
 
         self._cancel_hold(relay_id)
 
-        if target:
-            self._relays.turn_on(relay_id)
-        else:
-            self._relays.turn_off(relay_id)
+        await self._drive(relay_id, on=target)
         logger.info(
             "automation rule fired",
             extra={"rule_id": rule.id, "relay_id": relay_id, "on": target},
@@ -269,10 +286,7 @@ class AutomationEngine:
                 )
                 return
 
-            if applied:
-                self._relays.turn_off(relay_id)
-            else:
-                self._relays.turn_on(relay_id)
+            await self._drive(relay_id, on=not applied)
             logger.info(
                 "automation hold expired",
                 extra={"rule_id": rule.id, "relay_id": relay_id, "on": not applied},

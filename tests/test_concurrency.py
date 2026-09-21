@@ -13,11 +13,18 @@ lost toggles in the first case, ``KeyError`` in the second.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
+from collections.abc import Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
+from pihome_hub.automation import Action, AutomationEngine, AutomationRule, Trigger
 from pihome_hub.ratelimit import FailureLimiter
 from pihome_hub.relays import MockRelayBackend, RelayConfig, RelayService
+from pihome_hub.sensors import SensorReading
 
 _THREADS = 8
 
@@ -117,3 +124,145 @@ class TestFailureLimiterUnderThreads:
             list(pool.map(lambda _: limiter.record_failure("10.0.0.1"), range(total)))
 
         assert limiter.failure_count("10.0.0.1") == total
+
+
+class BlockingRelayBackend(MockRelayBackend):
+    """A backend whose write takes long enough to be visible from another task.
+
+    Distinct from :class:`SlowRelayBackend`, whose half-millisecond is tuned to
+    widen a lock window without slowing the suite. This one has to be longer than
+    the heartbeat interval below by a margin no scheduler jitter can close, because
+    what it is measuring is whether the event loop ran at all.
+    """
+
+    #: Long enough to dwarf the heartbeat, short enough that a test using it costs
+    #: a tenth of a second.
+    WRITE_SECONDS = 0.1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread_names: list[str] = []
+
+    def write(self, pin: int, *, on: bool) -> None:
+        self.thread_names.append(threading.current_thread().name)
+        time.sleep(self.WRITE_SECONDS)
+        super().write(pin, on=on)
+
+
+async def measure_loop_stall(during: Awaitable[object], *, interval: float = 0.005) -> float:
+    """Run ``during`` and report the longest gap between event-loop ticks, in seconds.
+
+    A heartbeat task that does nothing but sleep and note the time. If the loop is
+    free it wakes every ``interval``; if something synchronous is running on the
+    loop thread it cannot wake at all, and the gap it finds afterwards is how long
+    that something held it.
+
+    Measuring rather than asserting a thread name. A write dispatched to a worker
+    could still block the loop — by waiting on its result the wrong way, or by
+    holding a lock the loop then wants — and the stall is the thing that actually
+    matters to every other connection.
+    """
+    worst = 0.0
+    stop = False
+
+    async def heartbeat() -> None:
+        nonlocal worst
+        previous = time.perf_counter()
+        while not stop:
+            await asyncio.sleep(interval)
+            now = time.perf_counter()
+            worst = max(worst, now - previous)
+            previous = now
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        await during
+    finally:
+        stop = True
+        await beat
+
+    return worst
+
+
+@pytest.mark.anyio
+class TestTheLoopIsNotTheGpioBus:
+    """Ingestion is ``async def`` and awaits its way down to a blocking write.
+
+    ``RelayService._set`` takes a ``threading.RLock`` and then writes a GPIO pin.
+    Both are fine, and both were happening on the thread that serves every other
+    connection: a single relay write measured a 260 ms stall. The mutual exclusion
+    was never the problem — only which thread paid for it.
+    """
+
+    async def test_a_rule_firing_does_not_stall_the_loop(self) -> None:
+        backend = BlockingRelayBackend()
+        relays = RelayService(backend, [RelayConfig(id="porch-light", pin=17, label="Porch")])
+        rule = AutomationRule(
+            id="porch-motion-light",
+            when=Trigger(device="porch-motion", motion=True),
+            then=Action(relay="porch-light", state="on"),
+        )
+        engine = AutomationEngine(relays, [rule])
+
+        stall = await measure_loop_stall(
+            engine.handle_reading("porch-motion", SensorReading(motion=True), previous_motion=False)
+        )
+
+        assert relays.state_of("porch-light") is True, "the write did not happen at all"
+        assert stall < BlockingRelayBackend.WRITE_SECONDS / 2, (
+            f"the loop stalled for {stall * 1000:.0f} ms while a relay was written; "
+            "the write is back on the loop thread"
+        )
+
+    async def test_the_write_leaves_the_loop_thread(self) -> None:
+        """The same fact stated directly, so a failure says which half is wrong.
+
+        The stall assertion above is the one that matters — a write on a worker can
+        still stall the loop — but on its own it cannot distinguish "dispatched to a
+        thread" from "the backend got faster".
+        """
+        backend = BlockingRelayBackend()
+        relays = RelayService(backend, [RelayConfig(id="porch-light", pin=17, label="Porch")])
+        rule = AutomationRule(
+            id="porch-motion-light",
+            when=Trigger(device="porch-motion", motion=True),
+            then=Action(relay="porch-light", state="on"),
+        )
+        engine = AutomationEngine(relays, [rule])
+        loop_thread = threading.current_thread().name
+
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        assert backend.thread_names, "the backend was never written to"
+        assert loop_thread not in backend.thread_names, (
+            f"the GPIO write ran on {loop_thread}, which is the event loop's own thread"
+        )
+
+    async def test_a_hold_reverting_does_not_stall_the_loop_either(self) -> None:
+        """The other path onto the loop: the revert runs inside an asyncio task."""
+        backend = BlockingRelayBackend()
+        relays = RelayService(backend, [RelayConfig(id="porch-light", pin=17, label="Porch")])
+        hold = BlockingRelayBackend.WRITE_SECONDS / 4
+        rule = AutomationRule(
+            id="porch-motion-light",
+            when=Trigger(device="porch-motion", motion=True),
+            then=Action(relay="porch-light", state="on", hold_seconds=hold),
+        )
+        engine = AutomationEngine(relays, [rule])
+
+        async def fire_and_wait() -> None:
+            await engine.handle_reading(
+                "porch-motion", SensorReading(motion=True), previous_motion=False
+            )
+            # Past the hold, and past the write the revert then makes.
+            await asyncio.sleep(hold + BlockingRelayBackend.WRITE_SECONDS * 2)
+
+        stall = await measure_loop_stall(fire_and_wait())
+
+        assert relays.state_of("porch-light") is False, "the revert did not happen"
+        assert stall < BlockingRelayBackend.WRITE_SECONDS / 2, (
+            f"the loop stalled for {stall * 1000:.0f} ms while a hold reverted"
+        )
+        await engine.aclose()
