@@ -15,12 +15,13 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
+from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
-from pihome_hub.accounts import Session, SessionStore
+from pihome_hub.accounts import Role, Session, SessionStore
 from pihome_hub.config import Settings
 from pihome_hub.ratelimit import FailureLimiter
 
@@ -146,10 +147,18 @@ def authenticate_any_scope(request: Request) -> None:
     that — but "are you anonymous?", since answering 422 to an anonymous caller
     reveals which paths exist and what they accept.
 
-    Either key therefore satisfies it, and the check cannot be used to widen a
-    scope. Failures are counted in their own bucket so that a device with buggy
-    firmware cannot exhaust the allowance protecting the relay key.
+    Either key therefore satisfies it, and so does any session — the question is
+    only whether somebody is there, and a logged-in caller plainly is. Without that
+    branch a browser with a session but no key would be told 401 for a body it got
+    wrong, which is both untrue and the opposite of useful. The check cannot be
+    used to widen a scope either way: the route's own dependency still decides.
+
+    Failures are counted in their own bucket so that a device with buggy firmware
+    cannot exhaust the allowance protecting the relay key.
     """
+    if current_session(request) is not None:
+        return
+
     settings: Settings = request.app.state.settings
     limiter: FailureLimiter = request.app.state.auth_limiter
     presented = (request.headers.get(API_KEY_HEADER) or "").encode("utf-8")
@@ -233,6 +242,120 @@ def require_session(request: Request) -> Session:
 
 
 SessionRequired = Depends(require_session)
+
+#: Roles in order of what they may do. Compared by rank rather than by set
+#: membership so that adding a role between two existing ones is one line here and
+#: nothing at the call sites.
+_RANK: Final[Mapping[Role, int]] = {
+    Role.VIEWER: 0,
+    Role.OPERATOR: 1,
+    Role.ADMIN: 2,
+}
+
+#: Returned when a caller is known and not entitled. Deliberately different from
+#: _NO_SESSION_DETAIL: re-authenticating fixes that one and cannot fix this one.
+_FORBIDDEN_DETAIL = "This account is not allowed to do that"
+
+#: Methods that do not change the house, as RFC 9110 defines safe.
+_SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
+
+#: Header a browser must send with a cookie-authenticated write.
+#:
+#: Its *presence* is the whole check; the value is never read. A page on another
+#: origin cannot set a header like this without a CORS preflight, and this service
+#: answers no CORS headers at all, so the preflight fails and the request is never
+#: sent. That is the standard custom-header defence, and it needs no token store,
+#: no per-session secret and nothing that can fall out of step with a session.
+#:
+#: SameSite=Strict on the cookie already keeps it off any cross-site request, and
+#: this is deliberately a second lock on the same door: that one is a defence the
+#: *browser* provides, and a client that does not implement SameSite does not get
+#: it. SECURITY.md said a CSRF defence belonged in the same change that first let a
+#: session switch a relay, which is this one.
+CSRF_HEADER = "X-Pihome-CSRF"
+
+#: Returned when a cookie-authenticated write arrives without it.
+_CSRF_DETAIL = (
+    f"A cookie-authenticated write must carry the {CSRF_HEADER} header. Send it with any value."
+)
+
+
+def require_role(minimum: Role) -> Callable[[Request, str | None], None]:
+    """Build a dependency admitting a caller entitled to at least ``minimum``.
+
+    Two kinds of caller reach these routes and they are authorised differently,
+    which is the whole substance of this function.
+
+    A **session** is a person, and a person has a role on their account. That is
+    what gets compared, and a role below the requirement is refused with 403 —
+    not 401. The two are worth distinguishing: one says "log in", the other says
+    "you are logged in and this is not yours to do", and only the second is a
+    reason to go and find an admin. A client that cannot tell them apart shows a
+    login form to somebody who is already logged in.
+
+    An **API key** is not a person. It is one shared secret provisioned into
+    firmware and into scripts, with no account behind it and nobody to hold one, so
+    it carries no role and cannot be given one without inventing a user that
+    nothing ever logs in to. A valid relay key is therefore admitted exactly as it
+    always has been. That is a real limit and not a tidy one: while the web client
+    still reaches the hub through a proxy that attaches the key, a viewer's browser
+    is authorised by the key rather than by their role. Narrowing what the key may
+    do is a separate decision with a live deployment behind it — SECURITY.md says
+    so, and pihome-hub-web#8 is the half that has to land first.
+
+    The session is checked before the key, so a logged-in caller never touches the
+    failure limiter and cannot spend another caller's allowance by arriving without
+    a header they do not need.
+    """
+
+    def dependency(
+        request: Request,
+        x_api_key: Annotated[str | None, Header(alias=API_KEY_HEADER)] = None,
+    ) -> None:
+        session = current_session(request)
+        if session is not None:
+            if _RANK[session.user.role] < _RANK[minimum]:
+                logger.warning(
+                    "request refused: role is not sufficient",
+                    extra={
+                        "username": session.user.username,
+                        "role": session.user.role.value,
+                        "required": minimum.value,
+                        "path": request.url.path,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=_FORBIDDEN_DETAIL,
+                )
+
+            if request.method not in _SAFE_METHODS and CSRF_HEADER not in request.headers:
+                # Only the cookie path. A key is not an ambient credential: a
+                # browser will not attach it to a request some other page made, so
+                # there is nothing here for a forged request to borrow.
+                logger.warning(
+                    "cookie-authenticated write refused: no CSRF header",
+                    extra={
+                        "username": session.user.username,
+                        "path": request.url.path,
+                        "method": request.method,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=_CSRF_DETAIL,
+                )
+            return
+        _authenticate(request, Scope.RELAY, x_api_key)
+
+    return dependency
+
+
+#: Read the house. The floor, and what every /v1 read route requires.
+ViewerRequired = Depends(require_role(Role.VIEWER))
+
+#: Change the house. Every mutating relay route requires this.
+OperatorRequired = Depends(require_role(Role.OPERATOR))
 
 
 def login_bucket(request: Request) -> str:
