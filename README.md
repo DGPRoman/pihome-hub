@@ -270,9 +270,16 @@ rules:
 ```
 
 Sunrise and sunset come from a `location` block, so the coordinates of a house stay in
-its own git-ignored config. Continued motion restarts the countdown rather than queueing
-another timer, so a light stays on while someone is still there. Holds are asyncio tasks
-that are cancelled on shutdown — nothing is left scheduled by a process that has exited.
+its own git-ignored config. Holds are asyncio tasks that are cancelled on shutdown —
+nothing is left scheduled by a process that has exited.
+
+A rule answers a *change*. A motion sensor reporting on an interval sends the same value
+over and over, and acting on each one would mean nothing you do by hand survives longer
+than one reporting period. Continued motion restarts the countdown, so a light stays on
+while someone is still there, but it does not re-issue the command — and a write through
+`/v1/relays` calls off any hold aimed at that relay, so "stay on" means it. Relays report
+`hold_expires_at`, so a client can show that a state has a timer running against it
+instead of presenting it as settled.
 
 Every id a rule names is checked at startup: a rule pointing at a relay or device that
 does not exist stops the service with a message naming the rule, rather than failing

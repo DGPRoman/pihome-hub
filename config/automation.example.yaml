@@ -20,6 +20,10 @@ location:
 rules:
   # The classic: motion after dark turns the porch light on for a minute, and
   # continued motion keeps restarting that minute rather than queueing more timers.
+  #
+  # The rule fires when motion *changes* to true, not on every reading carrying it,
+  # and switching the relay yourself cancels the countdown. Between them, a light
+  # you set by hand stays where you put it until the sensor sees something new.
   - id: porch-motion-light
     when:
       device: porch-motion
