@@ -15,7 +15,7 @@ Notable differences from a bare ``uvicorn`` command line:
 from __future__ import annotations
 
 import sys
-from typing import Final
+from typing import Final, NoReturn
 
 import uvicorn
 from pydantic import ValidationError
@@ -63,6 +63,17 @@ def render_configuration_error(exc: ValidationError) -> str:
     return "\n".join(lines)
 
 
+def _exit_with(message: str, *, unexpected: bool = False) -> NoReturn:
+    """Report a startup failure in one line and exit with the configuration code."""
+    sys.stderr.write(f"pihome-hub: {message}\n")
+    if unexpected:
+        sys.stderr.write(
+            "This is not an error pihome-hub expected at startup. Please report it, "
+            "with this line, at https://github.com/DGPRoman/pihome-hub/issues\n"
+        )
+    raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
+
+
 def main() -> None:
     """Run the HTTP server in the foreground."""
     try:
@@ -78,25 +89,38 @@ def main() -> None:
     # with the wrong exit code, which a restarting unit turns into a crash loop.
     try:
         relay_service = build_relay_service(settings)
-        check_configuration(settings, relay_service)
     except (RelayError, SensorError, AutomationError) as exc:
-        sys.stderr.write(f"pihome-hub: {exc}\n")
-        raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
+        _exit_with(str(exc))
 
-    # Here rather than in the lifespan for the same reason as everything above: an
-    # unwritable state directory or a schema from a newer build is an operator
-    # problem, and it should read as one line rather than a traceback out of
-    # uvicorn's startup with an exit code the unit retries.
-    try:
-        prepare_database(settings.database_path)
-    except StorageError as exc:
-        sys.stderr.write(f"pihome-hub: {exc}\n")
-        raise SystemExit(EXIT_CONFIGURATION_ERROR) from None
-
+    # Past this line the pins are claimed and each relay has been driven to its
+    # initial_state, so every way out of this function has to release them — the ones
+    # that exit before the server starts included. A configuration error does not heal
+    # itself, so a restarting unit repeated that indefinitely with the circuit held
+    # where initial_state put it and shutdown_state never applied once.
+    #
     # This function built the service, so this function releases it. The lifespan
     # only closes a service it created itself, so that an app handed one does not
     # pull GPIO pins out from under whoever still holds a reference.
     try:
+        # prepare_database is here rather than in the lifespan for the same reason as
+        # everything above: an unwritable state directory or a schema from a newer
+        # build is an operator problem, and it should read as one line rather than a
+        # traceback out of uvicorn's startup with an exit code the unit retries.
+        try:
+            check_configuration(settings, relay_service)
+            prepare_database(settings.database_path)
+        except (RelayError, SensorError, AutomationError, StorageError) as exc:
+            _exit_with(str(exc))
+        except Exception as exc:
+            # Everything above names the errors it expects, which is right, and is
+            # also why two of them escaped: a bare ValueError out of SunClock and a
+            # PermissionError out of a chmod. Both are fixed at the source, but the
+            # value of naming exceptions is that the list is incomplete on purpose,
+            # and the cost of being wrong here is a crash loop with the pins held.
+            # Startup only: a failure once the server is running is not a
+            # configuration error and must not be reported as one.
+            _exit_with(f"{type(exc).__name__}: {exc}", unexpected=True)
+
         uvicorn.run(
             create_app(settings, relay_service=relay_service),
             host=settings.host,

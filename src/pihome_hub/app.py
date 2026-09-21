@@ -24,7 +24,13 @@ from pihome_hub.automation import AutomationEngine, AutomationError, SunClock, l
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.logging import configure_logging
 from pihome_hub.ratelimit import FailureLimiter
-from pihome_hub.relays import RelayHardwareError, RelayService, UnknownRelayError, load_relays
+from pihome_hub.relays import (
+    RelayHardwareError,
+    RelayService,
+    RelayServiceClosedError,
+    UnknownRelayError,
+    load_relays,
+)
 from pihome_hub.relays.factory import create_backend
 from pihome_hub.security import authenticate_any_scope
 from pihome_hub.sensors import SensorStore, UnknownDeviceError, load_sensors
@@ -247,6 +253,10 @@ def create_app(
     # the base classes of the two above, and a handler on a base class would swallow
     # the 404s into 503s.
     app.add_exception_handler(RelayHardwareError, _unavailable_handler)
+    # Reachable in the window where a request is in flight as the process shuts
+    # down. 503 rather than an unhandled 500: the hub genuinely cannot serve it,
+    # and it is about to stop being there at all.
+    app.add_exception_handler(RelayServiceClosedError, _unavailable_handler)
     app.add_exception_handler(StorageError, _unavailable_handler)
     app.add_exception_handler(AutomationError, _unavailable_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)

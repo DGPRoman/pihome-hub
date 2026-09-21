@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from astral import LocationInfo
 from astral.sun import sun
 
+from pihome_hub.automation.errors import AutomationConfigError
 from pihome_hub.automation.models import Location
 
 logger = logging.getLogger(__name__)
@@ -46,11 +47,15 @@ class SunClock:
         try:
             self._zone = ZoneInfo(location.timezone)
         except ZoneInfoNotFoundError as exc:
+            # AutomationConfigError, not ValueError. main() catches the domain base
+            # classes, so a bare ValueError from here escaped as a traceback with an
+            # exit code the unit retries — the exact failure the layer above was
+            # written to prevent, arriving through the one door left open.
             msg = (
                 f"unknown timezone {location.timezone!r}. Use an IANA name such as "
                 "'Europe/Kyiv'; on a minimal system the tzdata package may be missing."
             )
-            raise ValueError(msg) from exc
+            raise AutomationConfigError(msg) from exc
 
         self._observer = LocationInfo(
             name="configured",

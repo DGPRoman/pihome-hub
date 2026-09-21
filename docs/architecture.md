@@ -118,6 +118,21 @@ Both are fully validated before the port is bound — see below.
 Exit code 2 means "everything above step 5 failed", and the unit refuses to restart on
 it. Anything the process cannot foresee — a bound port — exits 3, which is retried.
 
+Steps 3 and 4 run inside one try/finally that starts at step 2, because step 2 is where
+the pins are claimed and each relay is driven to its `initial_state`. Everything after it
+has to give them back, including the paths that never reach step 5. Without that, a rule
+naming a relay that does not exist exited 2 with the circuit held closed and
+`shutdown_state` never applied — and since a typo does not heal itself, every restart
+did it again.
+
+Step 3 and step 4 also have a catch-all beneath the errors they name. Naming the
+exceptions you expect is right, and is also how two of them got out: a bare `ValueError`
+from `SunClock` on an unknown timezone, and a `PermissionError` from the `chmod` at the
+end of `prepare_database`. Both are fixed where they are raised. The catch-all is there
+because that list is incomplete on purpose and the cost of being wrong about it is a
+crash loop with the pins held. It covers startup only — a failure once uvicorn is
+serving is not the operator's configuration and is not reported as one.
+
 One subtlety worth knowing if you touch step 4: `sqlite3.connect()` opens nothing. It
 returns a handle and defers the real work, so a directory the service cannot write to
 raises on the *first statement*, not on the call. The pragmas therefore run inside the
@@ -128,6 +143,18 @@ and an exit code the unit retries forever.
 
 Ownership follows construction, because the alternative is a service whose GPIO pins get
 released underneath something still holding a reference to it.
+
+`RelayService.close()` is idempotent, and has to be: three callers release a service —
+`__main__`'s `finally`, the lifespan's `owned` branch, and the self-call that unwinds a
+part-way startup — and only their current ordering kept the second one from writing to a
+pin that had already been given back. That came back as `failed to drive relay to its
+shutdown state`, which reads as a hardware fault during shutdown when nothing is wrong.
+
+A write to a closed service raises `RelayServiceClosedError` rather than a hardware
+error: the pins are gone, the wiring is fine, and the difference decides whether somebody
+spends the evening with a multimeter. `status()` keeps answering, because shutdown
+logging runs at exactly that moment; after `close()` it is a record of what this process
+last drove, not a reading, and `closed` is how a caller knows which it is holding.
 
 - `__main__` builds the `RelayService`, passes it to `create_app`, and closes it in a
   `finally`.

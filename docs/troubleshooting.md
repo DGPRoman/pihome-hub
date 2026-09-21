@@ -36,6 +36,11 @@ systemctl show -p ExecMainCode -p ExecMainStatus pihome-hub
 | `3` | The process started but uvicorn could not run — most often the port is already bound | Restarts after 5s. Correct: that condition can clear on its own |
 | killed by `SIGTERM` | A clean `systemctl stop`. Shutdown still runs to completion, so `shutdown_state` is applied and pending holds are cancelled | Nothing. `SIGTERM` counts as a success |
 
+Whichever of these it is, the pins are released and `shutdown_state` is applied on the
+way out — the early exits included. A `SIGTERM` arriving during startup is the one
+exception: nothing is unwound, so the relay keeps the level `initial_state` gave it until
+the kernel reclaims the pin and the board's own idle level takes over.
+
 ## The service will not start
 
 Match the line, not the exit code — they all exit 2.
@@ -43,6 +48,8 @@ Match the line, not the exit code — they all exit 2.
 | Journal line | Cause | Fix |
 | --- | --- | --- |
 | `configuration is invalid` then `PIHOME_RELAY_API_KEY: Field required` | A key is unset | Generate one into `/etc/pihome-hub/hub.env` |
+| `unknown timezone 'Europe/Nowhere'` | The `location` block names something that is not an IANA zone, or `tzdata` is missing on a minimal system | Correct the name, or `apt install tzdata` |
+| `could not restrict permissions on the database` | The database file is owned by another account | `ls -l` the state directory; the file holds password hashes and the service will not run with it readable by others |
 | `API key looks like example config (contains 'change-me')` | The example value survived | Same, with a real value |
 | `API key must be at least 32 characters, got 5` | Too short to be worth having | Same |
 | `docs_enabled is true while bound to '0.0.0.0'` | Docs would be served unauthenticated to the network | Leave `PIHOME_DOCS_ENABLED=false`, and reach `/docs` over `ssh -L 5002:127.0.0.1:5002 pi` |
