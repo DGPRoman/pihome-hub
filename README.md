@@ -110,6 +110,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_LOG_JSON` | `false` | One JSON object per log record |
 | `PIHOME_ACCESS_LOG` | `false` | Log every HTTP request |
 | `PIHOME_DOCS_ENABLED` | `false` | Serve Swagger UI and the OpenAPI schema. Refused unless bound to loopback |
+| `PIHOME_WEB_ROOT` | *unset* | Directory holding the built web client, served at `/`. Unset serves the API alone |
 | `PIHOME_GPIO_BACKEND` | `mock` | `mock` or `gpiozero` — driving real pins is explicit |
 | `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
 | `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
@@ -364,6 +365,37 @@ hides `/dev/gpiochip0`, the second hides the `/proc/device-tree` that gpiozero r
 identify the board. A test asserts neither gets enabled. Review the rest with
 `systemd-analyze security pihome-hub`.
 
+**The browser client is served by the hub, or not at all.**
+[`pihome-hub-web`](https://github.com/DGPRoman/pihome-hub-web) builds to a directory of
+static files with no server of its own. Point `PIHOME_WEB_ROOT` at that directory and the
+hub serves it at `/`; leave it unset — as every deployment so far does — and the hub
+serves its API and nothing else.
+
+```bash
+sudo git clone https://github.com/DGPRoman/pihome-hub-web.git /opt/pihome-hub-web
+sudo npm --prefix /opt/pihome-hub-web ci
+sudo npm --prefix /opt/pihome-hub-web run build
+echo 'PIHOME_WEB_ROOT=/opt/pihome-hub-web/dist' | sudo tee -a /etc/pihome-hub/hub.env
+sudo systemctl restart pihome-hub.service
+```
+
+Under `/opt` rather than a home directory, because `ProtectHome=yes` means home
+directories are not there for the service to read. A path with no `index.html` in it stops
+the service with a line saying so, rather than turning into a 404 on the front page.
+
+The mount is last, so the API is tried first, and a request for a path the bundle has no
+file for is answered with `index.html` — which is what makes a client-side route survive a
+refresh. Two things it will not do that. A request that asks for no HTML is a subresource,
+not a route, so a missing `.js` stays a 404 instead of arriving as a document labelled as
+JavaScript. And a path whose first segment is one the hub serves itself stays with the
+hub, so a mistyped `/v1` call is still a JSON 404 rather than the front page. That list of
+segments is read off the router, so a route added later is covered without anyone
+remembering to come back here.
+
+Nothing under the bundle is authenticated, deliberately: it is the login form and the code
+that draws it, which a browser needs before anyone has a session. What it then asks for
+lives under `/v1` and is guarded there.
+
 Two things the unit does not solve. `SupplementaryGroups=gpio` assumes that group exists,
 which it does on Raspberry Pi OS and often does not elsewhere. And the service still binds
 loopback: reaching it from the LAN means setting `PIHOME_HOST`, and since it speaks plain
@@ -379,6 +411,7 @@ src/pihome_hub/
 ├── app.py             ASGI application factory
 ├── config.py          settings and validation
 ├── security.py        API-key authentication, two scopes
+├── web.py             serving the built web client, when one is configured
 ├── ratelimit.py       failure counting behind the 429
 ├── logging.py         stdout logging, text or JSON
 ├── api/

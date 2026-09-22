@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     #: deployment does not publish its own route map.
     docs_enabled: bool = False
 
+    # -- Web client ----------------------------------------------------------
+    #: Directory holding the built browser client, served at ``/``. Unset by
+    #: default, so an API-only deployment — which is every deployment that exists
+    #: today — is unchanged and serves no files at all.
+    web_root: Path | None = None
+
     # -- Hardware ------------------------------------------------------------
     #: Which relay backend to drive. ``mock`` by default: touching real GPIO
     #: pins is something an operator opts into, never a fallback.
