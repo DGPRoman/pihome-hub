@@ -35,6 +35,7 @@ from pihome_hub.relays.factory import create_backend
 from pihome_hub.security import authenticate_any_scope
 from pihome_hub.sensors import SensorStore, UnknownDeviceError, load_sensors
 from pihome_hub.storage import StorageError
+from pihome_hub.web import check_web_root, mount_web_client
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,14 @@ def check_configuration(settings: Settings, relays: RelayService) -> None:
     release. The cost is reading two small YAML files twice at startup. The alternative
     is a typo in a rule escaping as a traceback from inside uvicorn's own startup,
     which exits 3 — a code the unit treats as worth retrying, forever.
+
+    The web root is checked here for the same reason: a bundle that is not where the
+    setting says would otherwise be discovered by whoever opened the page, and read
+    as a broken hub rather than as a missing build.
     """
     build_automation_engine(settings, relays, build_sensor_store(settings))
+    if settings.web_root is not None:
+        check_web_root(settings.web_root)
 
 
 @asynccontextmanager
@@ -266,5 +273,10 @@ def create_app(
     app.include_router(read_router)
     app.include_router(ingest_router)
     app.include_router(automation_router)
+
+    # Last, and only if asked for. The mount answers every path the routes above
+    # did not, so anything registered after it would be unreachable.
+    if resolved.web_root is not None:
+        mount_web_client(app, resolved.web_root)
 
     return app

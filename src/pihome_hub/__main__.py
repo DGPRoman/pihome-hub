@@ -26,6 +26,7 @@ from pihome_hub.config import Settings, get_settings
 from pihome_hub.relays import RelayError
 from pihome_hub.sensors import SensorError
 from pihome_hub.storage import StorageError, prepare_database
+from pihome_hub.web import WebClientError
 
 #: Exit code for "started with a broken configuration", following the convention
 #: that 2 means the operator got the invocation wrong.
@@ -109,7 +110,7 @@ def main() -> None:
         try:
             check_configuration(settings, relay_service)
             prepare_database(settings.database_path)
-        except (RelayError, SensorError, AutomationError, StorageError) as exc:
+        except (RelayError, SensorError, AutomationError, StorageError, WebClientError) as exc:
             _exit_with(str(exc))
         except Exception as exc:
             # Everything above names the errors it expects, which is right, and is
