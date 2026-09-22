@@ -12,8 +12,9 @@
 #
 # Actions only. There was a pip entry here and it had to go: requirements/*.txt
 # are produced by `uv pip compile`, which writes a *solved* dependency graph, and
-# Dependabot updates packages one at a time. Its first attempt bumped
-# pydantic-core to 2.49.0 while pydantic 2.13.5 pins it to 2.46.4 exactly, and the
+# Dependabot updates packages one at a time. Its first attempt moved both halves
+# of a pinned pair, each to its own latest — pydantic to 2.13.5 and pydantic-core
+# to 2.49.0 — but pydantic 2.13.5 requires pydantic-core==2.46.5 exactly, so the
 # result would not install on any of the four environments CI builds. That is not
 # a formatting quarrel the way it was first written up here — it is what updating
 # one member of a solved graph does, so no configuration of it would be right.
