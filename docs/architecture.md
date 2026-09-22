@@ -207,6 +207,15 @@ relay routes are sync `def`, so Starlette runs them in a worker thread. `Task.ca
 only be called on the loop that owns the task, so each hold records its loop and the
 cancellation goes through `call_soon_threadsafe`.
 
+Traffic goes the other way too, and for a while it went the wrong way. Everything below
+`RelayService` is synchronous and blocking: a `threading.RLock`, and then a write to a GPIO
+pin. The routes are sync `def` and already run in the threadpool, so they pay for that on a
+worker. Ingestion does not — `POST /v1/sensors/{id}/readings` is `async def` and awaits its
+way down to the same write, which put the lock and the bus on the thread serving every
+other connection. One relay write stalled the loop for 105 ms in a test that measures it.
+The engine now drives relays through `anyio.to_thread.run_sync`. Nothing about the mutual
+exclusion was wrong; the question was only ever which thread paid for it.
+
 ## The hardware seam
 
 `RelayBackend` is a `Protocol` with four methods: `read_level`, `setup_output`, `write`,
