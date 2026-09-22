@@ -12,6 +12,10 @@
 # Needed only by rules using only_after_dark, to work out sunrise and sunset.
 # These coordinates identify your home — this file is git-ignored for that reason,
 # and they must never be written into source.
+#
+# Any latitude works, including ones with no sunrise or sunset for part of the
+# year. On such a date "after dark" covers the whole of it: a day the sun never
+# sets on is never dark, and one it never rises on is dark throughout.
 location:
   latitude: 50.4501
   longitude: 30.5234

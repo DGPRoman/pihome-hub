@@ -181,17 +181,47 @@ class AutomationEngine:
                 # relay: whoever set it last may not have been this rule.
                 self._extend_hold(rule)
                 continue
-            if rule.only_after_dark and self._sun is not None and not self._sun.is_dark():
-                logger.debug(
-                    "rule skipped: not dark yet",
-                    extra={"rule_id": rule.id, "device_id": device_id},
-                )
+            if rule.only_after_dark and not self._dark_enough(rule.id, device_id):
                 continue
 
             await self._apply(rule)
             fired.append(rule.id)
 
         return fired
+
+    def _dark_enough(self, rule_id: str, device_id: str) -> bool:
+        """Whether an ``only_after_dark`` rule may act, and never an exception.
+
+        The reading is recorded before the engine is asked anything, so an
+        exception from here is a 500 over work that has already been kept: the
+        device retries a reading the hub has, and keeps retrying while whatever
+        upset the oracle lasts. That was observable — a location above the Arctic
+        circle turned every ingest into a 500 for the length of the polar day —
+        and it is a poor trade in general, since the worst a swallowed failure
+        costs is one rule not firing.
+
+        Unknown counts as not dark. A rule that asked to wait for darkness should
+        not switch a relay on a guess, and the operator can still switch it by
+        hand.
+        """
+        if self._sun is None:
+            return True
+
+        try:
+            dark = self._sun.is_dark()
+        except Exception:
+            logger.exception(
+                "rule skipped: darkness could not be determined",
+                extra={"rule_id": rule_id, "device_id": device_id},
+            )
+            return False
+
+        if not dark:
+            logger.debug(
+                "rule skipped: not dark yet",
+                extra={"rule_id": rule_id, "device_id": device_id},
+            )
+        return dark
 
     async def _drive(self, relay_id: str, *, on: bool) -> None:
         """Set one relay, off the event loop.
