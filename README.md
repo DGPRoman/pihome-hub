@@ -283,8 +283,11 @@ rules:
 ```
 
 Sunrise and sunset come from a `location` block, so the coordinates of a house stay in
-its own git-ignored config. Holds are asyncio tasks that are cancelled on shutdown —
-nothing is left scheduled by a process that has exited.
+its own git-ignored config. Above the Arctic circle and below the Antarctic one there are
+dates with neither, and there "after dark" means the whole date: a day the sun never sets
+on is never dark, and one it never rises on is dark from midnight to midnight. Holds are
+asyncio tasks that are cancelled on shutdown — nothing is left scheduled by a process that
+has exited.
 
 A rule answers a *change*. A motion sensor reporting on an interval sends the same value
 over and over, and acting on each one would mean nothing you do by hand survives longer

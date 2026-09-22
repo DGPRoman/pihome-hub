@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -71,6 +72,19 @@ class AlwaysDark:
 class NeverDark:
     def is_dark(self) -> bool:
         return False
+
+
+class BrokenOracle:
+    """An oracle that cannot answer.
+
+    Real once: a hub configured above the Arctic circle raised out of astral for
+    the whole of the polar day. That is fixed at the source, but the engine is
+    handed a `DarknessOracle` protocol and has no way to know what is behind it.
+    """
+
+    def is_dark(self) -> bool:
+        msg = "expected a number in range from -1 up to 1, got -2.63"
+        raise ValueError(msg)
 
 
 @pytest.mark.anyio
@@ -392,6 +406,46 @@ class TestDarknessCondition:
     async def test_a_rule_without_the_condition_fires_in_daylight(self) -> None:
         relays = make_relays()
         engine = AutomationEngine(relays, [motion_rule()], sun=NeverDark(), sensors=make_sensors())
+
+        assert (
+            await engine.handle_reading(
+                "porch-motion", SensorReading(motion=True), previous_motion=False
+            )
+            != []
+        )
+
+    async def test_an_oracle_that_raises_skips_the_rule_rather_than_the_reading(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The reading is recorded before the engine sees it.
+
+        So an exception escaping here is a 500 over work already kept, and the
+        device retries a reading the hub has — for as long as whatever upset the
+        oracle lasts. One rule not firing is the cheaper failure, and the rule
+        asked to wait for darkness, so unknown is not dark.
+        """
+        relays = make_relays()
+        engine = AutomationEngine(
+            relays, [motion_rule(after_dark=True)], sun=BrokenOracle(), sensors=make_sensors()
+        )
+
+        with caplog.at_level(logging.WARNING):
+            fired = await engine.handle_reading(
+                "porch-motion", SensorReading(motion=True), previous_motion=False
+            )
+
+        assert fired == []
+        assert relays.state_of("porch-light") is False
+        # Skipped, not swallowed: the traceback is in the log with the rule named.
+        assert "darkness could not be determined" in caplog.text
+        assert "ValueError" in caplog.text
+
+    async def test_a_rule_without_the_condition_ignores_a_broken_oracle(self) -> None:
+        """Only `only_after_dark` rules consult it, so only they can be stopped."""
+        relays = make_relays()
+        engine = AutomationEngine(
+            relays, [motion_rule()], sun=BrokenOracle(), sensors=make_sensors()
+        )
 
         assert (
             await engine.handle_reading(

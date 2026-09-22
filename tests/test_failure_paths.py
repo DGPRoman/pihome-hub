@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 
@@ -22,10 +23,11 @@ from fastapi.testclient import TestClient
 
 from pihome_hub.accounts import Role, UserStore
 from pihome_hub.app import create_app
+from pihome_hub.automation import Location, SunClock
 from pihome_hub.config import Settings
 from pihome_hub.relays import MockRelayBackend, RelayService
 from pihome_hub.storage import prepare_database
-from tests.conftest import RELAY_HEADERS, build_relay_service
+from tests.conftest import RELAY_HEADERS, SENSOR_HEADERS, build_relay_service
 
 PASSWORD = "correct-horse-battery"
 
@@ -136,3 +138,92 @@ class TestAStateDirectoryThatWentReadOnly:
             directory.chmod(0o700)
 
         assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+
+
+POLAR_SENSORS_YAML = """
+devices:
+  - id: porch-motion
+    label: "Porch motion"
+    stale_after_seconds: 300
+"""
+
+#: Svalbard, and a rule that has to know whether it is dark.
+POLAR_AUTOMATION_YAML = """
+location:
+  latitude: 78.2232
+  longitude: 15.6267
+  timezone: Arctic/Longyearbyen
+rules:
+  - id: porch-motion-light
+    when:
+      device: porch-motion
+      motion: true
+    only_after_dark: true
+    then:
+      relay: porch-light
+      state: on
+      hold_seconds: 0.05
+"""
+
+
+class TestALocationWhereTheSunDoesNotSet:
+    """Ingestion at a latitude the sun does not rise or set at.
+
+    Not a hardware failure like the two above, and not a 503 either — the request
+    is answerable, and the whole fault was that it was not being answered. The
+    reading is recorded before any rule runs, so the 500 came back over work the
+    hub had already kept, and a device retrying on 5xx re-recorded it every time,
+    for the length of the polar day.
+    """
+
+    @pytest.fixture
+    def midsummer_client(
+        self, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[TestClient]:
+        sensors = tmp_path / "sensors.yaml"
+        sensors.write_text(POLAR_SENSORS_YAML, encoding="utf-8")
+        automation = tmp_path / "automation.yaml"
+        automation.write_text(POLAR_AUTOMATION_YAML, encoding="utf-8")
+
+        # The location is in the config; the date cannot be, so the clock the app
+        # wires in is replaced with a fixed midsummer one. A subclass rather than a
+        # stub, so what answers the request is the real SunClock.
+        class Midsummer(SunClock):
+            def __init__(self, location: Location) -> None:
+                super().__init__(location, clock=lambda: datetime(2026, 6, 21, 1, 0, tzinfo=UTC))
+
+        monkeypatch.setattr("pihome_hub.app.SunClock", Midsummer)
+
+        prepare_database(settings.database_path)
+        app = create_app(
+            settings.model_copy(
+                update={"sensor_config_path": sensors, "automation_config_path": automation}
+            ),
+            relay_service=build_relay_service(MockRelayBackend()),
+        )
+        with TestClient(app, raise_server_exceptions=False) as client:
+            yield client
+
+    def test_a_reading_is_accepted_rather_than_a_500(self, midsummer_client: TestClient) -> None:
+        response = midsummer_client.post(
+            "/v1/sensors/porch-motion/readings", json={"motion": True}, headers=SENSOR_HEADERS
+        )
+
+        assert response.status_code == HTTPStatus.ACCEPTED
+
+    def test_the_rule_does_not_fire_under_the_midnight_sun(
+        self, midsummer_client: TestClient
+    ) -> None:
+        """01:00 local, and broad daylight. A porch light has no business coming on.
+
+        The status alone would pass with `is_dark` hard-wired to either answer, so
+        this asserts the answer as well: the rule asked for darkness and there is
+        none.
+        """
+        midsummer_client.post(
+            "/v1/sensors/porch-motion/readings", json={"motion": True}, headers=SENSOR_HEADERS
+        )
+
+        relays = midsummer_client.get("/v1/relays", headers=RELAY_HEADERS).json()
+        porch = next(relay for relay in relays["relays"] if relay["id"] == "porch-light")
+        assert porch["on"] is False
