@@ -174,15 +174,26 @@ re-reads the account rather than trusting what was true when it was opened. A pa
 change is the one that has to be said out loud, which is why `passwd` ends the sessions
 itself.
 
-**A session does not yet open any other route.** Logging in over HTTP works — `/v1/session`
-issues, reports and clears the cookie — but the rest of `/v1` still authenticates by API
-key alone and does not consult the role the session carries. Until it does, the cookie
-proves who you are without deciding what you may do.
+**A session opens the rest of `/v1`, and the role decides how far.** Every read route
+takes any account; every route that changes the house takes `operator` or `admin`. A
+session below that is refused `403` rather than `401`, which is a different answer to a
+different question: one says log in, the other says this is not yours to do, and a client
+that cannot tell them apart shows a login form to somebody already logged in.
+
+A write authenticated by the cookie must also carry an `X-Pihome-CSRF` header — any value;
+its presence is the whole check. A page on another origin cannot set one without a CORS
+preflight this service will not answer, which is what stops a request the browser makes on
+another site's behalf from switching a circuit. See SECURITY.md.
+
+**The API key still carries no role.** It is one shared secret with no account behind it,
+so a caller presenting it reaches every relay route as before. That is the limit worth
+knowing: while the web client talks to the hub through a proxy that attaches the key, a
+`viewer` using it is authorised by the key rather than by their role.
 
 ## API
 
-Everything under `/v1` requires an `X-API-Key` header, except the login route — which is
-what makes it the way in. Idempotent operations use `PUT`; `toggle` is a `POST`, since
+Everything under `/v1` requires an `X-API-Key` header or a session cookie, except the login
+route — which is what makes it the way in. Idempotent operations use `PUT`; `toggle` is a `POST`, since
 replaying it does not produce the same result twice.
 
 | Method | Path | Purpose |
@@ -236,9 +247,10 @@ password, and disabled account are not distinguished, because which one it was i
 caller's to learn. Failed attempts are counted in their own bucket, so somebody guessing
 at the login form cannot lock out the firmware.
 
-**Sessions do not yet grant anything but `/v1/session`.** The relay and sensor routes still
-require their API key. Accepting a session on them, with the roles it carries, is the next
-piece of work.
+**A session now authenticates the rest of `/v1` too, and its role decides what for.**
+Reads take any account; writes take `operator` or `admin`, and a cookie-authenticated
+write carries `X-Pihome-CSRF`. The API key is unchanged and still admits its holder to
+everything, because it names no account to have a role.
 
 ### The two keys
 
@@ -400,9 +412,10 @@ tests/                 runs without hardware, against the mock backend
 | 7 | Accounts, roles and sessions | in progress |
 
 Phase 7 is what unblocks the [web client's](https://github.com/DGPRoman/pihome-hub-web)
-own roadmap. Storage, password hashing, the user store, `pihome-hub-admin` and the
-session endpoints are in place; what is left is enforcing the role those sessions carry
-on the rest of `/v1`, which still takes an API key.
+own roadmap. Storage, password hashing, the user store, `pihome-hub-admin`, the session
+endpoints and role enforcement across `/v1` are in place. What is left is on the other
+side: the browser logging in for itself instead of reaching the hub through a proxy that
+attaches the API key — until that lands, a role restricts a session and not that client.
 
 ## License
 

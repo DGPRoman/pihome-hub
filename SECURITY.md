@@ -18,7 +18,9 @@ project with no commercial support and no bug bounty.
 
 | Threat | Mitigation |
 | --- | --- |
-| Unauthenticated relay control | Every `/v1` route requires an API key; `/health` is the only unauthenticated endpoint and returns no build detail |
+| Unauthenticated relay control | Every `/v1` route requires an API key or a session; `/health` is the only unauthenticated endpoint and returns no build detail |
+| A read-only account switching a mains circuit | Every mutating `/v1` route requires `operator` or `admin`. A session below that is refused `403`, which is a different answer from `401` and a different thing for a client to do about it |
+| Cross-site request forgery against a logged-in browser | A cookie-authenticated write must carry `X-Pihome-CSRF`. Setting a header like that from another origin needs a CORS preflight, and this service answers none, so the request is never sent. `SameSite=Strict` on the cookie is the first lock on the same door |
 | Credential theft from a sensor device | Sensor ingestion and relay control use separate keys, so a key recovered from firmware cannot switch relays |
 | Timing attacks on key comparison | Keys are compared with `secrets.compare_digest` |
 | Online key guessing | Failed attempts are counted per client and per scope over a sliding window; exhausting the allowance returns `429`. See the limits of this below |
@@ -66,17 +68,26 @@ project with no commercial support and no bug bounty.
   a deliberate compromise for a board with 512 MB of RAM, not the strongest setting
   available. A weak password in a stolen database is still a weak password; the 12-
   character minimum is a floor, not a guarantee.
-- **Cross-site request forgery rests on `SameSite=Strict` alone.** There is no CSRF
-  token. Strict keeps the cookie off any request another site initiated, including a
-  top-level navigation, which is the defence — and it is a defence the *browser*
-  provides, so a client that does not implement `SameSite` does not get it. Today the
-  exposure is nil either way: the only cookie-authenticated routes are `GET` and
-  `DELETE` on `/v1/session`, one of which reads and the other of which can only log you
-  out. That changes the moment a session is accepted on a route that switches a relay,
-  and a CSRF token belongs in the same change rather than after it.
-- **A role restricts nothing yet.** A session says who is asking; the relay and sensor
-  routes still ask only for an API key, so `viewer` and `admin` can do exactly as much
-  as each other over HTTP. Role enforcement is the next piece of work.
+- **The API key carries no role, and cannot be given one.** It is a single shared
+  secret provisioned into firmware and into scripts, with no account behind it and
+  nobody to hold one. A caller presenting it is admitted to every relay route exactly
+  as before, so a role only restricts somebody authenticated by a *session*. That
+  matters most where it is least visible: while
+  [pihome-hub-web](https://github.com/DGPRoman/pihome-hub-web) reaches the hub through
+  a proxy that attaches the key, a `viewer` using that client is authorised by the key
+  and not by their role. The half that closes this is the browser logging in for itself
+  and the proxy no longer injecting anything — pihome-hub-web#8 — after which the key
+  can be narrowed to the devices that still need it.
+- **Cross-site request forgery is defended by two things, neither of them a token.**
+  `SameSite=Strict` keeps the cookie off any request another site initiated, including
+  a top-level navigation; and a cookie-authenticated write must carry the
+  `X-Pihome-CSRF` header, which a page on another origin cannot set without a CORS
+  preflight this service will not answer. There is deliberately no token: one would
+  need somewhere to live, and a store that can fall out of step with the session it
+  belongs to is a new way to be wrong about who is asking. The header's *presence* is
+  the whole check and its value is never read, which is what makes it stateless.
+  A key-authenticated write needs no header — a browser will not attach a key to a
+  request some other page made, so there is nothing there to borrow.
 - **`Secure` is off by default, and has to be.** The service speaks plain HTTP, and a
   `Secure` cookie is one a browser will not send over it — login would appear to work
   and every request after it would be anonymous. Behind a TLS proxy, set

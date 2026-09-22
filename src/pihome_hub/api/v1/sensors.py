@@ -15,13 +15,19 @@ from fastapi import APIRouter, Request, Response
 
 from pihome_hub.api.v1.schemas import SensorCollection
 from pihome_hub.automation import AutomationEngine
-from pihome_hub.security import RelayKeyRequired, SensorKeyRequired
+from pihome_hub.security import SensorKeyRequired, ViewerRequired
 from pihome_hub.sensors import DeviceSnapshot, SensorReading, SensorStore
 
 logger = logging.getLogger(__name__)
 
 _AUTH_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"description": "Missing or invalid API key"},
+    429: {"description": "Too many failed authentication attempts"},
+}
+
+_READ_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"description": "Not authenticated"},
+    403: {"description": "The account is not allowed to do that"},
     429: {"description": "Too many failed authentication attempts"},
 }
 
@@ -33,12 +39,13 @@ ingest_router = APIRouter(
     responses=_AUTH_RESPONSES,
 )
 
-#: Clients read here. Relay key, the same one used to control the house.
+#: Clients read here. The relay key, or any session — reading the house is the
+#: least any account may do, so this is the floor rather than a role worth naming.
 read_router = APIRouter(
     prefix="/v1/sensors",
     tags=["sensors"],
-    dependencies=[RelayKeyRequired],
-    responses=_AUTH_RESPONSES,
+    dependencies=[ViewerRequired],
+    responses=_READ_RESPONSES,
 )
 
 

@@ -17,16 +17,19 @@ from fastapi import APIRouter, Request
 from pihome_hub.api.v1.schemas import RelayCollection, RelayState, RelayStateRequest
 from pihome_hub.automation import AutomationEngine
 from pihome_hub.relays import RelayConfig, RelayService
-from pihome_hub.security import RelayKeyRequired
+from pihome_hub.security import OperatorRequired, ViewerRequired
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/v1/relays",
     tags=["relays"],
-    dependencies=[RelayKeyRequired],
+    # Reading the house is the floor. Each route that changes it adds the stricter
+    # requirement of its own below; both run, and the stricter one decides.
+    dependencies=[ViewerRequired],
     responses={
-        401: {"description": "Missing or invalid API key"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "The account is not allowed to do that"},
         429: {"description": "Too many failed authentication attempts"},
     },
 )
@@ -96,7 +99,11 @@ def list_relays(request: Request) -> RelayCollection:
     return _collection(request, _service(request))
 
 
-@router.put("", summary="Set every relay to the same state")
+@router.put(
+    "",
+    summary="Set every relay to the same state",
+    dependencies=[OperatorRequired],
+)
 def set_all_relays(request: Request, desired: RelayStateRequest) -> RelayCollection:
     service = _service(request)
     _release_holds(request, *service.configured)
@@ -108,7 +115,11 @@ def set_all_relays(request: Request, desired: RelayStateRequest) -> RelayCollect
     return _collection(request, service)
 
 
-@router.post("/toggle", summary="Invert every relay independently")
+@router.post(
+    "/toggle",
+    summary="Invert every relay independently",
+    dependencies=[OperatorRequired],
+)
 def toggle_all_relays(request: Request) -> RelayCollection:
     service = _service(request)
     _release_holds(request, *service.configured)
@@ -129,6 +140,7 @@ def get_relay(request: Request, relay_id: str) -> RelayState:
 @router.put(
     "/{relay_id}",
     summary="Set one relay to a state",
+    dependencies=[OperatorRequired],
     responses={404: {"description": "No relay with that id is configured"}},
 )
 def set_relay(request: Request, relay_id: str, desired: RelayStateRequest) -> RelayState:
@@ -148,6 +160,7 @@ def set_relay(request: Request, relay_id: str, desired: RelayStateRequest) -> Re
 @router.post(
     "/{relay_id}/toggle",
     summary="Invert one relay",
+    dependencies=[OperatorRequired],
     responses={404: {"description": "No relay with that id is configured"}},
 )
 def toggle_relay(request: Request, relay_id: str) -> RelayState:

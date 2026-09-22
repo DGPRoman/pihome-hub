@@ -265,6 +265,32 @@ also delete accounts", and a household wants the middle one:
 The values are constrained twice, in the enum and in the `users` table's `CHECK`, so a
 role neither one knows cannot reach a row.
 
+**How a role is enforced.** `require_role(minimum)` builds a route dependency; each `/v1`
+router carries `ViewerRequired`, and every route that changes the house adds
+`OperatorRequired` of its own. Both run and the stricter one decides. Roles are compared
+by rank rather than by membership of a set, so `admin` satisfies a requirement for
+`operator` without either having to know about the other, and adding a role between two
+existing ones is one line.
+
+Two kinds of caller arrive, and the difference is the whole substance of the dependency. A
+**session** is a person and their account has a role — that is what gets compared, and a
+role below the requirement is `403`. An **API key** is not a person: one shared secret in
+firmware and scripts, no account behind it, nobody to hold one. It carries no role and
+cannot be given one without inventing a user that nothing logs in to, so a valid relay key
+is admitted exactly as it always has been. SECURITY.md records what that costs.
+
+The session is checked first, which is not merely an ordering. A logged-in caller then
+never reaches the failure limiter, so arriving without a header they do not need cannot
+spend an allowance that exists to slow down key guessing.
+
+A cookie-authenticated write must also carry `X-Pihome-CSRF`. Presence is the whole check
+and the value is never read: a page on another origin cannot set a header like that
+without a CORS preflight, and this service answers no CORS headers, so the request is
+never sent. A token would need somewhere to live, and a store that can fall out of step
+with its session is a new way to be wrong about who is asking. Key-authenticated writes
+are exempt — a browser will not attach a key to a request another page made, so there is
+nothing there to borrow.
+
 `UserStore` is the only thing that reads the `password_hash` column. A `User` has no such
 field, which means no route can serialise one by accident — not a rule to remember, a
 value nothing outside the store is ever handed.
