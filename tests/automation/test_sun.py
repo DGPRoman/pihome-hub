@@ -26,6 +26,11 @@ KYIV = Location(latitude=50.4501, longitude=30.5234, timezone="Europe/Kyiv")
 SVALBARD = Location(latitude=78.2232, longitude=15.6267, timezone="Arctic/Longyearbyen")
 # The mirror of it, where the same two dates mean the opposite seasons.
 MCMURDO = Location(latitude=-77.8419, longitude=166.6863, timezone="Antarctica/McMurdo")
+# On the equator the day is near enough twelve hours all year, so the same hour
+# gives the same answer at both solstices — the case the seasonal ones are not.
+NAIROBI = Location(latitude=-1.2921, longitude=36.8219, timezone="Africa/Nairobi")
+# Southern mid-latitude: December is high summer and June is the dark half.
+WELLINGTON = Location(latitude=-41.2866, longitude=174.7756, timezone="Pacific/Auckland")
 # The limit the Location model permits. There is no sunrise here for half a year
 # and the local timezone is a convention rather than a fact, which is exactly why
 # it is worth asserting that nothing raises.
@@ -87,6 +92,39 @@ class TestIsDark:
     def test_winter_afternoon_is_dark(self) -> None:
         """The same wall-clock hour differs by season, which is the whole point."""
         assert SunClock(KYIV, clock=clock_at(16, day=21, month=12)).is_dark() is True
+
+
+class TestLatitudeAndSeason:
+    """The same hour, read at several latitudes.
+
+    The suite used to stand on one mid-northern city, which cannot tell a rule
+    that works from a rule that works there. These cases are chosen so that a
+    hemisphere or season dropped out of the arithmetic shows up as a failure.
+    """
+
+    @pytest.mark.parametrize(
+        ("location", "month", "hour_utc", "dark", "because"),
+        [
+            # Nairobi is UTC+3 and a degree off the equator, where the day is
+            # near enough twelve hours all year: the same hour answers the same
+            # at both solstices, which none of the others do.
+            (NAIROBI, 6, 0, True, "03:00 local, before a ~06:30 sunrise"),
+            (NAIROBI, 12, 0, True, "03:00 local, and December changes nothing here"),
+            (NAIROBI, 6, 9, False, "midday local"),
+            (NAIROBI, 12, 9, False, "midday local, and December changes nothing here"),
+            # Wellington is the season inverted. Each pair is one wall-clock hour
+            # answering differently in June and December.
+            (WELLINGTON, 6, 6, True, "18:00 local in midwinter, after sunset"),
+            (WELLINGTON, 12, 6, False, "19:00 local in midsummer, still light"),
+            (WELLINGTON, 6, 18, True, "06:00 local in midwinter, before sunrise"),
+            (WELLINGTON, 12, 18, False, "07:00 local in midsummer, long since up"),
+        ],
+    )
+    def test_darkness_by_latitude_and_season(
+        self, location: Location, month: int, hour_utc: int, dark: bool, because: str
+    ) -> None:
+        clock = clock_at(hour_utc, day=21, month=month)
+        assert SunClock(location, clock=clock).is_dark() is dark, because
 
 
 class TestPolarDayAndNight:
