@@ -167,10 +167,20 @@ class Settings(BaseSettings):
     #: from ``relay_api_key`` so firmware flashed onto a sensor cannot also
     #: drive relays directly if that firmware is ever extracted.
     sensor_api_key: SecretStr
+    #: Authenticates devices announcing where they are and what key to ask them
+    #: with. Optional, unlike the other two, because a deployment with no HTTP
+    #: devices has nothing to announce — and unset is a closed door rather than an
+    #: open one: with no value to compare against, the announcement route refuses
+    #: every request. Declaring a device without setting this stops the service at
+    #: startup rather than leaving a route nothing can reach.
+    device_api_key: SecretStr | None = None
 
-    @field_validator("relay_api_key", "sensor_api_key")
+    @field_validator("relay_api_key", "sensor_api_key", "device_api_key")
     @classmethod
-    def _reject_weak_keys(cls, value: SecretStr) -> SecretStr:
+    def _reject_weak_keys(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+
         secret = value.get_secret_value()
 
         if len(secret) < MIN_API_KEY_LENGTH:

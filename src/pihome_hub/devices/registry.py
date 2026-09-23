@@ -15,7 +15,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from pihome_hub.devices.models import (
     DeviceStatus,
     PollTarget,
 )
-from pihome_hub.storage import connect, writing
+from pihome_hub.storage import DatabaseUnavailableError, connect, writing
 
 #: Longest failure message kept against a device. It can come from whatever
 #: answered on that address, so it is a value to bound rather than to trust.
@@ -93,6 +94,33 @@ class DeviceRegistry:
     def configured(self) -> Mapping[str, Device]:
         return dict(self._declared)
 
+    @contextmanager
+    def _reading(self) -> Iterator[sqlite3.Connection]:
+        """A connection whose statement errors arrive as :class:`StorageError`.
+
+        ``connect`` wraps what goes wrong while *opening*; a statement against a
+        database that opened fine — one whose schema was never created, one on a
+        filesystem that has since gone read-only — raises ``sqlite3.Error`` as
+        itself. Left alone that escapes a route as an unhandled 500, past the
+        handler registered for exactly this kind of failure.
+        """
+        try:
+            with connect(self._path) as connection:
+                yield connection
+        except sqlite3.Error as exc:
+            msg = f"could not read the device registry at {self._path}: {exc}"
+            raise DatabaseUnavailableError(msg) from exc
+
+    @contextmanager
+    def _writing(self) -> Iterator[sqlite3.Connection]:
+        """The same, for a write, and holding this object's lock while it runs."""
+        try:
+            with self._lock, writing(self._path) as connection:
+                yield connection
+        except sqlite3.Error as exc:
+            msg = f"could not write the device registry at {self._path}: {exc}"
+            raise DatabaseUnavailableError(msg) from exc
+
     def _require(self, device_id: str) -> Device:
         try:
             return self._declared[device_id]
@@ -112,7 +140,7 @@ class DeviceRegistry:
         can already read the live keys beside it. A device taken out of service
         should have its key rotated on the device.
         """
-        with self._lock, writing(self._path) as connection:
+        with self._writing() as connection:
             if not self._declared:
                 cursor = connection.execute("DELETE FROM devices")
                 return cursor.rowcount
@@ -134,7 +162,7 @@ class DeviceRegistry:
         device = self._require(device_id)
         now = self._clock()
 
-        with self._lock, writing(self._path) as connection:
+        with self._writing() as connection:
             connection.execute(
                 """
                 INSERT INTO devices (id, address, api_key, firmware, announced_at)
@@ -166,7 +194,7 @@ class DeviceRegistry:
 
     def status(self, device_id: str) -> DeviceStatus:
         device = self._require(device_id)
-        with connect(self._path) as connection:
+        with self._reading() as connection:
             row = _find(connection, device_id)
         return _to_status(device, row)
 
@@ -178,7 +206,7 @@ class DeviceRegistry:
         single most interesting row in the list, and a query over the table alone
         would leave it out.
         """
-        with connect(self._path) as connection:
+        with self._reading() as connection:
             rows = {row["id"]: row for row in connection.execute("SELECT * FROM devices")}
         return [
             _to_status(device, rows.get(device_id)) for device_id, device in self._declared.items()
@@ -186,7 +214,7 @@ class DeviceRegistry:
 
     def targets(self) -> list[PollTarget]:
         """One target per device that has announced. The others have no address."""
-        with connect(self._path) as connection:
+        with self._reading() as connection:
             rows = list(connection.execute("SELECT id, address, api_key FROM devices"))
 
         targets = []
@@ -250,7 +278,7 @@ class DeviceRegistry:
         ``unreachable_since`` is only taken when there is not one already, so it
         marks the start of a run of failures rather than the most recent one.
         """
-        with self._lock, writing(self._path) as connection:
+        with self._writing() as connection:
             connection.execute(
                 """
                 UPDATE devices SET

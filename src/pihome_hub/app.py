@@ -17,11 +17,20 @@ from pihome_hub import __version__
 from pihome_hub.accounts import SessionStore, UserStore
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.automation import router as automation_router
+from pihome_hub.api.v1.devices import announce_router
+from pihome_hub.api.v1.devices import read_router as device_read_router
 from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
 from pihome_hub.api.v1.session import router as session_router
 from pihome_hub.automation import AutomationEngine, AutomationError, SunClock, load_automation
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.devices import (
+    DeviceConfigError,
+    DeviceRegistry,
+    UndeclaredDeviceError,
+    load_devices,
+)
+from pihome_hub.devices.poller import DevicePoller
 from pihome_hub.logging import configure_logging
 from pihome_hub.ratelimit import FailureLimiter
 from pihome_hub.relays import (
@@ -68,6 +77,17 @@ def build_sensor_store(settings: Settings) -> SensorStore:
     return SensorStore(load_sensors(settings.sensor_config_path))
 
 
+def build_device_registry(settings: Settings) -> DeviceRegistry:
+    """Assemble the device registry described by ``settings``.
+
+    Reads the declaration; the announced half comes out of the database, which this
+    does not open. A registry with no declared devices is a perfectly good one — it
+    serves an empty collection and 404s every id, which is what a deployment with no
+    HTTP devices should see.
+    """
+    return DeviceRegistry(settings.database_path, load_devices(settings.device_config_path))
+
+
 def build_automation_engine(
     settings: Settings, relays: RelayService, sensors: SensorStore
 ) -> AutomationEngine:
@@ -92,8 +112,29 @@ def check_configuration(settings: Settings, relays: RelayService) -> None:
     as a broken hub rather than as a missing build.
     """
     build_automation_engine(settings, relays, build_sensor_store(settings))
+    check_device_key(settings, build_device_registry(settings))
     if settings.web_root is not None:
         check_web_root(settings.web_root)
+
+
+def check_device_key(settings: Settings, devices: DeviceRegistry) -> None:
+    """Refuse to start with devices declared and no key for them to announce with.
+
+    Without one there is no value to compare an announcement against, so every
+    announcement is refused — and the devices would sit there unpolled, with no
+    address, reporting nothing, for a reason that is nowhere in the logs. Saying so
+    at startup costs one line and turns a silent feature into a fixable message.
+    """
+    if not devices.configured or settings.device_api_key is not None:
+        return
+    declared = ", ".join(sorted(devices.configured))
+    msg = (
+        f"{settings.device_config_path} declares {declared}, but PIHOME_DEVICE_API_KEY "
+        "is not set. Devices announce their address with that key, and without it "
+        "every announcement is refused. Generate one: "
+        'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+    )
+    raise DeviceConfigError(msg)
 
 
 @asynccontextmanager
@@ -123,6 +164,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.automation = build_automation_engine(settings, service, sensors)
     engine: AutomationEngine = app.state.automation
 
+    if getattr(app.state, "devices", None) is None:
+        app.state.devices = build_device_registry(settings)
+    devices: DeviceRegistry = app.state.devices
+    # A device an operator removed from the file is one this hub stops talking to,
+    # and stops holding a key for. Done here rather than lazily so it happens once
+    # per run instead of on whichever request looked first.
+    #
+    # Never fatal. This is housekeeping, and a hub that refused to switch a relay
+    # because it could not tidy a table it may have no rows in would be trading a
+    # working service for a neat one. A database that is genuinely unusable is
+    # reported by prepare_database before the server starts, and by a 503 from any
+    # route that needs it.
+    try:
+        forgotten = devices.forget_undeclared()
+    except StorageError:
+        logger.warning("could not drop devices no longer declared", exc_info=True)
+    else:
+        if forgotten:
+            logger.info("dropped devices no longer declared", extra={"count": forgotten})
+
+    # Nothing to ask means nothing to start. A loop waking every interval to find no
+    # targets is not free on a Pi, and its absence from the logs is accurate.
+    poller: DevicePoller | None = None
+    if devices.configured:
+        poller = DevicePoller(
+            devices,
+            interval_seconds=settings.device_poll_seconds,
+            timeout_seconds=settings.device_poll_timeout_seconds,
+        )
+        poller.start()
+
     logger.info(
         "pihome-hub starting",
         extra={
@@ -131,13 +203,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "relays": len(service.configured),
             "sensors": len(sensors.configured),
             "automation_rules": len(engine.rules),
+            "devices": len(devices.configured),
             "docs_enabled": settings.docs_enabled,
         },
     )
     try:
         yield
     finally:
-        # Cancel pending holds first: a revert firing against a closed relay service
+        # The poller first: it is the only thing here that both holds a socket and
+        # writes to the database, and letting a cycle land after the rest has gone
+        # is how shutdown produces a traceback nobody can act on.
+        if poller is not None:
+            await poller.aclose()
+        # Cancel pending holds next: a revert firing against a closed relay service
         # would be a confusing traceback on the way out.
         await engine.aclose()
         app.state.automation = None
@@ -256,6 +334,7 @@ def create_app(
 
     app.add_exception_handler(UnknownRelayError, _not_found_handler)
     app.add_exception_handler(UnknownDeviceError, _not_found_handler)
+    app.add_exception_handler(UndeclaredDeviceError, _not_found_handler)
     # Registered by the specific class, not by RelayError or SensorError: those are
     # the base classes of the two above, and a handler on a base class would swallow
     # the 404s into 503s.
@@ -273,6 +352,8 @@ def create_app(
     app.include_router(read_router)
     app.include_router(ingest_router)
     app.include_router(automation_router)
+    app.include_router(device_read_router)
+    app.include_router(announce_router)
 
     # Last, and only if asked for. The mount answers every path the routes above
     # did not, so anything registered after it would be unreachable.

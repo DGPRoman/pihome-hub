@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from http import HTTPStatus
 from typing import Final
 
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from pihome_hub.app import create_app
 from pihome_hub.relays import RelayService
+from pihome_hub.storage import prepare_database
 from tests.conftest import RELAY_HEADERS, SENSOR_HEADERS, VALID_KEY, build_settings
 
 #: Routes under /v1 that deliberately take no credential, each with the reason it is
@@ -30,6 +32,22 @@ _ANONYMOUS_BY_DESIGN: Final = {
 }
 
 
+@pytest.fixture
+def unswept_client(relay_service: RelayService) -> Iterator[TestClient]:
+    """A client whose failure limiter will not interrupt a sweep over every route.
+
+    The sweep below makes one unauthenticated request per ``/v1`` route, and every
+    one of them is a failure the limiter counts. On the default allowance the later
+    routes answer 429 instead of 401 — still a refusal, but not the one being
+    asserted, and which route it lands on depends on nothing but how many routes
+    exist. Raising the allowance keeps the sweep measuring what it claims to.
+    """
+    settings = build_settings(auth_max_failures=1000)
+    prepare_database(settings.database_path)
+    with TestClient(create_app(settings, relay_service=relay_service)) as client:
+        yield client
+
+
 class TestKeyRequired:
     def test_no_key_is_rejected(self, client: TestClient) -> None:
         assert client.get("/v1/relays").status_code == HTTPStatus.UNAUTHORIZED
@@ -44,7 +62,7 @@ class TestKeyRequired:
         assert client.get("/v1/relays", headers=RELAY_HEADERS).status_code == HTTPStatus.OK
 
     def test_every_versioned_route_is_guarded(
-        self, client: TestClient, registered_routes: list[tuple[str, str]]
+        self, unswept_client: TestClient, registered_routes: list[tuple[str, str]]
     ) -> None:
         """Driven by route enumeration, not a hand-written list.
 
@@ -70,7 +88,7 @@ class TestKeyRequired:
             # segment, so a narrower substitution would still pass — by coincidence
             # rather than by covering the route.
             concrete = re.sub(r"\{[^}]+\}", "some-id", path)
-            response = client.request(method, concrete, json={"on": True})
+            response = unswept_client.request(method, concrete, json={"on": True})
             if response.status_code != HTTPStatus.UNAUTHORIZED:
                 unguarded.append(f"{method} {path} -> {response.status_code}")
 

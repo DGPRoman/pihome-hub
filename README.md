@@ -104,6 +104,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | --- | --- | --- |
 | `PIHOME_RELAY_API_KEY` | *required* | Authenticates relay control clients |
 | `PIHOME_SENSOR_API_KEY` | *required* | Authenticates sensor devices pushing readings |
+| `PIHOME_DEVICE_API_KEY` | *unset* | Authenticates HTTP devices announcing their address. Unset refuses every announcement; required once a device is declared |
 | `PIHOME_HOST` | `127.0.0.1` | Bind address |
 | `PIHOME_PORT` | `5002` | Bind port |
 | `PIHOME_LOG_LEVEL` | `INFO` | Root log level |
