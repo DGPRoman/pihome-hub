@@ -32,6 +32,11 @@ dependencies = [
   # zoneinfo, so no separate timezone dependency is needed.
   "astral==3.2",
   "fastapi==0.141.1",
+  # Outbound HTTP, for polling devices on the LAN. Async rather than urllib in a
+  # thread: a poll needs a deadline over the whole exchange, and only a coroutine
+  # can be cancelled to enforce one — a blocked thread stays blocked. Starlette's
+  # TestClient also needs it, which is why it was a dev dependency first.
+  "httpx2==2.9.1",
   "pydantic==2.13.4",
   "pydantic-settings==2.14.2",
   "PyYAML==6.0.3",
@@ -46,9 +51,6 @@ rpi = [
   "lgpio==0.2.2.0",
 ]
 dev = [
-  # Starlette's TestClient requires httpx2; the original httpx is deprecated for
-  # this use and emits a warning that the suite treats as an error.
-  "httpx2==2.9.1",
   "mypy==2.3.0",
   "pytest==9.1.1",
   "ruff==0.16.0",

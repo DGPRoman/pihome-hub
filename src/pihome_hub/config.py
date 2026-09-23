@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     #: with an address this service will then make requests to.
     device_config_path: Path = Path("config/devices.yaml")
 
+    #: How often every announced device is asked for its status. Thirty seconds is
+    #: chosen against what the reading is for: somebody glancing at a dashboard to
+    #: see whether a machine is on. Polling faster would spend a device's radio and
+    #: this card's write cycles to shorten a wait nobody is having.
+    device_poll_seconds: Annotated[float, Field(gt=0)] = 30.0
+    #: How long one device has to answer before it is recorded as unreachable. The
+    #: deadline covers the whole exchange, not each read, so a device drip-feeding
+    #: a response cannot hold the cycle open past it.
+    device_poll_timeout_seconds: Annotated[float, Field(gt=0)] = 5.0
+
     # -- State ---------------------------------------------------------------
     #: Where accounts and sessions live. The default follows the unit rather than
     #: repeating it: systemd exports STATE_DIRECTORY for every StateDirectory= it

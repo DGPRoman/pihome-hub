@@ -116,6 +116,8 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
 | `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
 | `PIHOME_DEVICE_CONFIG_PATH` | `config/devices.yaml` | HTTP devices this hub polls (optional) |
+| `PIHOME_DEVICE_POLL_SECONDS` | `30.0` | How often each announced device is asked for its status |
+| `PIHOME_DEVICE_POLL_TIMEOUT_SECONDS` | `5.0` | How long one device has to answer before it is recorded unreachable |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
 | `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days), from when it happened rather than from the last request |
 | `PIHOME_SESSION_COOKIE_SECURE` | `false` | `Secure` on the session cookie. Only true behind a TLS proxy — over plain HTTP the browser would never send it |
