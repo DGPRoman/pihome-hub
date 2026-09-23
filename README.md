@@ -487,14 +487,23 @@ tests/                 runs without hardware, against the mock backend
 | 4 | Sensor ingestion, declarative automation rules, sun-based conditions | ✅ done |
 | 5 | systemd unit, install script, deployment hardening | ✅ done |
 | 6 | Architecture, installation, migration and troubleshooting docs | ✅ done |
-| 7 | Accounts, roles and sessions | in progress |
+| 7 | Accounts, roles and sessions | ✅ done |
 | 8 | HTTP devices: announcement, registry and status polling | ✅ done |
 
-Phase 7 is what unblocks the [web client's](https://github.com/DGPRoman/pihome-hub-web)
-own roadmap. Storage, password hashing, the user store, `pihome-hub-admin`, the session
-endpoints and role enforcement across `/v1` are in place. What is left is on the other
-side: the browser logging in for itself instead of reaching the hub through a proxy that
-attaches the API key — until that lands, a role restricts a session and not that client.
+Phase 7 is what unblocked the [web client's](https://github.com/DGPRoman/pihome-hub-web)
+own roadmap, and both halves have landed. Storage, password hashing, the user store,
+`pihome-hub-admin`, the session endpoints and role enforcement across `/v1` are on this
+side; the browser logs in for itself on the other, and the dev proxy no longer attaches an
+API key. That last part is what made the rest count: a key admits its holder to every
+route, so while one was attached a role restricted a session and not that client.
+
+What is not here is administration over HTTP. Accounts exist only through
+`pihome-hub-admin` at a terminal on the Pi — there is no `/v1/users`, so creating one,
+changing a role or disabling one cannot be done over the network. Devices are declared in
+a file and `/v1/devices` only reads, which is [on purpose](docs/devices.md): declaring
+rather than discovering is what stops an announcement aiming the hub at an address nobody
+chose. Whether accounts should follow is a separate question, and one worth answering
+before writing routes that hand out authority.
 
 ## License
 
