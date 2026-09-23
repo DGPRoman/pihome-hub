@@ -13,6 +13,12 @@ config/*.yml
 !config/*.example.yaml
 !config/*.example.yml
 
+# The state directory a development run writes into. Off systemd the database
+# falls back to var/hub.db beside the checkout, and that file holds session
+# tokens and every key a device has announced, in the clear — docs/devices.md
+# says why the keys cannot be hashed. None of it belongs in a commit.
+var/
+
 # Python
 __pycache__/
 *.py[cod]

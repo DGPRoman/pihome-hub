@@ -132,5 +132,11 @@ Either way:
 - Keep host addresses, GPS coordinates and network topology in configuration, not in
   source. `config/*.yaml` is git-ignored for exactly this reason; only
   `*.example.yaml` templates are tracked.
+- Never commit the state directory. Off systemd the database falls back to `var/hub.db`
+  beside the checkout, and it holds session tokens and every key a device has announced
+  in the clear — [`docs/devices.md`](docs/devices.md) says why those cannot be hashed.
+  `var/` is git-ignored, and `tests/test_deploy.py` derives the fallback path from the
+  configuration and asserts git ignores it, so moving the fallback fails the suite
+  rather than moving the file out from under the rule.
 - If a secret is ever committed, treat it as public permanently and rotate it.
   Rewriting history does not retract what has already been fetched, forked or indexed.
