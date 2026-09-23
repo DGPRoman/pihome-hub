@@ -1,9 +1,10 @@
-"""Authentication: two API keys, and a session cookie.
+"""Authentication: three API keys, and a session cookie.
 
-The keys cover distinct roles — relay control and sensor ingestion — and keeping
-them separate means a key recovered from sensor firmware cannot be replayed to
-switch relays. They are for firmware and scripts: a device that is provisioned once
-and then left alone has nobody to type a password.
+The keys cover distinct roles — relay control, sensor ingestion, and devices saying
+where they are — and keeping them separate means a key recovered from sensor
+firmware cannot be replayed to switch relays or to repoint a device. They are for
+firmware and scripts: a device that is provisioned once and then left alone has
+nobody to type a password.
 
 Sessions are for people. A browser holds an opaque token in an HttpOnly cookie and
 the account behind it is re-read on every request, so a role change or a disabled
@@ -51,6 +52,12 @@ class Scope(StrEnum):
 
     RELAY = "relay"
     SENSOR = "sensor"
+    #: Devices announcing where they are and what key to ask them with. Its own
+    #: scope because an announcement is a credential handover that lands in a table
+    #: this hub then makes authenticated requests from — neither of the other two
+    #: keys should carry that, and a key extracted from sensor firmware should not
+    #: be able to repoint the device in a PC case.
+    DEVICE = "device"
 
 
 def normalise_client(host: str) -> str:
@@ -89,10 +96,22 @@ def client_key(request: Request) -> str:
     return normalise_client(request.client.host)
 
 
-def _expected_key(settings: Settings, scope: Scope) -> str:
+def _expected_key(settings: Settings, scope: Scope) -> str | None:
+    """The key that satisfies ``scope``, or ``None`` if none is configured.
+
+    Only the device key can be absent, and a scope with no key configured
+    authenticates nobody: there is no value to compare against, so every request
+    in that scope is refused. That is what makes the feature opt-in rather than
+    open — a deployment that never set one has a route nothing can get through,
+    not a route with no lock on it.
+    """
     if scope is Scope.RELAY:
         return settings.relay_api_key.get_secret_value()
-    return settings.sensor_api_key.get_secret_value()
+    if scope is Scope.SENSOR:
+        return settings.sensor_api_key.get_secret_value()
+    if settings.device_api_key is None:
+        return None
+    return settings.device_api_key.get_secret_value()
 
 
 def _authenticate(request: Request, scope: Scope, presented: str | None) -> None:
@@ -116,8 +135,9 @@ def _authenticate(request: Request, scope: Scope, presented: str | None) -> None
     expected = _expected_key(settings, scope)
     # compare_digest over bytes: it takes constant time for equal-length inputs,
     # and encoding first avoids the TypeError str comparison raises on non-ASCII.
-    supplied = presented or ""
-    if not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
+    supplied = (presented or "").encode("utf-8")
+    accepted = expected is not None and secrets.compare_digest(supplied, expected.encode("utf-8"))
+    if not accepted:
         limiter.record_failure(client)
         logger.warning(
             "authentication failed",
@@ -126,6 +146,11 @@ def _authenticate(request: Request, scope: Scope, presented: str | None) -> None
                 "scope": scope.value,
                 "path": request.url.path,
                 "key_present": presented is not None,
+                # Distinguishes "wrong key" from "this deployment configured none",
+                # which is the difference between a device to fix and a hub to
+                # finish setting up. In the log, where the operator is — the
+                # response says the same thing either way.
+                "key_configured": expected is not None,
                 "recent_failures": limiter.failure_count(client),
             },
         )
@@ -164,8 +189,8 @@ def authenticate_any_scope(request: Request) -> None:
     presented = (request.headers.get(API_KEY_HEADER) or "").encode("utf-8")
 
     for scope in Scope:
-        expected = _expected_key(settings, scope).encode("utf-8")
-        if secrets.compare_digest(presented, expected):
+        expected = _expected_key(settings, scope)
+        if expected is not None and secrets.compare_digest(presented, expected.encode("utf-8")):
             return
 
     bucket = f"probe:{client_key(request)}"
@@ -207,8 +232,21 @@ def require_sensor_key(
     _authenticate(request, Scope.SENSOR, x_api_key)
 
 
+def require_device_key(
+    request: Request,
+    x_api_key: Annotated[str | None, Header(alias=API_KEY_HEADER)] = None,
+) -> None:
+    """Dependency guarding the announcement route.
+
+    Refuses everything while no device key is configured, which is the state every
+    deployment that has no devices is in.
+    """
+    _authenticate(request, Scope.DEVICE, x_api_key)
+
+
 RelayKeyRequired = Depends(require_relay_key)
 SensorKeyRequired = Depends(require_sensor_key)
+DeviceKeyRequired = Depends(require_device_key)
 
 
 def current_session(request: Request) -> Session | None:

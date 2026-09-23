@@ -7,9 +7,10 @@ runs declarative automation rules — the sort that turns on outdoor lights when
 sensor fires, but only after dark. It runs on a Raspberry Pi Zero 2 W that stays powered
 around the clock, and it is deliberately small enough to read in one sitting.
 
-> **Status: functional and deployable.** Relay control, sensor ingestion and automation
-> all work and are covered by tests, and two files provision a Raspberry Pi. See
-> [Deployment](#deployment), [Architecture](docs/architecture.md),
+> **Status: functional and deployable.** Relay control, sensor ingestion, automation
+> and polling of HTTP devices all work and are covered by tests, and two files
+> provision a Raspberry Pi. See [Deployment](#deployment),
+> [Architecture](docs/architecture.md), [HTTP devices](docs/devices.md),
 > [Troubleshooting](docs/troubleshooting.md) and [Moving to another
 > Pi](docs/migration.md).
 
@@ -104,6 +105,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | --- | --- | --- |
 | `PIHOME_RELAY_API_KEY` | *required* | Authenticates relay control clients |
 | `PIHOME_SENSOR_API_KEY` | *required* | Authenticates sensor devices pushing readings |
+| `PIHOME_DEVICE_API_KEY` | *unset* | Authenticates HTTP devices announcing their address. Unset refuses every announcement; required once a device is declared |
 | `PIHOME_HOST` | `127.0.0.1` | Bind address |
 | `PIHOME_PORT` | `5002` | Bind port |
 | `PIHOME_LOG_LEVEL` | `INFO` | Root log level |
@@ -115,6 +117,9 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_RELAY_CONFIG_PATH` | `config/relays.yaml` | Relay wiring |
 | `PIHOME_SENSOR_CONFIG_PATH` | `config/sensors.yaml` | Sensor devices (optional) |
 | `PIHOME_AUTOMATION_CONFIG_PATH` | `config/automation.yaml` | Automation rules (optional) |
+| `PIHOME_DEVICE_CONFIG_PATH` | `config/devices.yaml` | HTTP devices this hub polls (optional) |
+| `PIHOME_DEVICE_POLL_SECONDS` | `30.0` | How often each announced device is asked for its status |
+| `PIHOME_DEVICE_POLL_TIMEOUT_SECONDS` | `5.0` | How long one device has to answer before it is recorded unreachable |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
 | `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days), from when it happened rather than from the last request |
 | `PIHOME_SESSION_COOKIE_SECURE` | `false` | `Secure` on the session cookie. Only true behind a TLS proxy — over plain HTTP the browser would never send it |
@@ -213,6 +218,9 @@ replaying it does not produce the same result twice.
 | `GET` | `/v1/sensors/{id}` | Read one sensor |
 | `POST` | `/v1/sensors/{id}/readings` | Push a reading — **sensor key**, not the relay key |
 | `GET` | `/v1/automation/rules` | Every configured rule, including the disabled ones |
+| `GET` | `/v1/devices` | Every declared HTTP device, where it announced itself, and what it last answered |
+| `GET` | `/v1/devices/{id}` | Read one device |
+| `POST` | `/v1/devices/{id}/announcements` | A device says where it is — **device key**, not either of the others |
 
 ```console
 $ curl -H "X-API-Key: $KEY" http://127.0.0.1:5002/v1/relays
@@ -300,6 +308,39 @@ instead of presenting it as settled.
 Every id a rule names is checked at startup: a rule pointing at a relay or device that
 does not exist stops the service with a message naming the rule, rather than failing
 silently the first time someone walks past the sensor.
+
+## Devices
+
+A **sensor** pushes readings. A **device** is asked for them — the hub makes the
+request, on an interval, and keeps the answer. The one this was written for is
+[esp32c3-pc-power](https://github.com/DGPRoman/esp32c3-pc-power), a board across a
+PC's front-panel header that reports whether the machine is on.
+
+Which devices exist is declared, in the same way sensors and relays are. Where each
+one is, and what key to ask it with, is not: DHCP decides the address and the device
+generates its own key at first boot, so both arrive in an announcement the device
+sends when it boots or moves.
+
+```console
+$ curl -X POST -H "X-API-Key: $DEVICE_KEY" -H 'Content-Type: application/json' \
+       -d '{"address":"http://10.0.0.5","api_key":"…","firmware":"0.3.0"}' \
+       http://127.0.0.1:5002/v1/devices/workshop-pc/announcements
+# 204, empty body — the device key does not grant reads
+
+$ curl -H "X-API-Key: $RELAY_KEY" http://127.0.0.1:5002/v1/devices/workshop-pc
+{"id":"workshop-pc","address":"http://10.0.0.5","reachable":true,
+ "state":{"state":"on","pending":"none","uptime_ms":498210},...}
+```
+
+`state` is the device's own status document, passed through as it was served: what
+its fields mean is that device's contract to state, not this one's. A device that
+stops answering is reported as unreachable with the reason, keeping its last reading
+and the time it was taken — a dated reading is more use than none.
+
+An announcement is the one request that hands this hub a credential and an address
+it will then call, which is why it takes a third key rather than the sensor key, and
+why the address must be a private IP literal over plain `http`. The full contract,
+for whoever is writing the firmware half: [HTTP devices](docs/devices.md).
 
 ## Deployment
 
@@ -413,25 +454,26 @@ src/pihome_hub/
 ├── admin.py           pihome-hub-admin — account management at a terminal
 ├── app.py             ASGI application factory
 ├── config.py          settings and validation
-├── security.py        API-key authentication, two scopes
+├── security.py        API-key authentication, three scopes
 ├── web.py             serving the built web client, when one is configured
 ├── ratelimit.py       failure counting behind the 429
 ├── logging.py         stdout logging, text or JSON
 ├── api/
 │   ├── system.py      /health — unversioned, unauthenticated
-│   └── v1/            relay, sensor and automation routes (authenticated)
+│   └── v1/            relay, sensor, automation and device routes (authenticated)
 ├── relays/
 │   ├── backend.py     RelayBackend protocol — the hardware seam
 │   ├── mock.py        in-memory backend for development, tests and CI
 │   ├── gpio.py        real backend via gpiozero (needs the 'rpi' extra)
 │   └── service.py     logical on/off/toggle over configured relays
 ├── sensors/           declared devices and the latest reading from each, in memory
+├── devices/           HTTP devices: where they announced, and the poller that asks
 ├── automation/        rules, the engine that applies them, and sunrise/sunset
 ├── accounts/          users, roles, and scrypt password hashing
 └── storage/           the SQLite file: connection pragmas and schema versioning
-config/                relays.example.yaml — copy and edit; the real file is ignored
+config/                *.example.yaml — copy and edit; the real files are ignored
 deploy/                pihome-hub.service and install.sh — provisioning a Pi
-docs/                  architecture.md, troubleshooting.md, migration.md
+docs/                  architecture.md, devices.md, troubleshooting.md, migration.md
 tests/                 runs without hardware, against the mock backend
 ```
 
@@ -446,6 +488,7 @@ tests/                 runs without hardware, against the mock backend
 | 5 | systemd unit, install script, deployment hardening | ✅ done |
 | 6 | Architecture, installation, migration and troubleshooting docs | ✅ done |
 | 7 | Accounts, roles and sessions | in progress |
+| 8 | HTTP devices: announcement, registry and status polling | ✅ done |
 
 Phase 7 is what unblocks the [web client's](https://github.com/DGPRoman/pihome-hub-web)
 own roadmap. Storage, password hashing, the user store, `pihome-hub-admin`, the session

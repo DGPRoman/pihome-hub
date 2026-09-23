@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from pihome_hub.app import build_relay_service, check_configuration, create_app
 from pihome_hub.automation import AutomationError
 from pihome_hub.config import Settings, get_settings
+from pihome_hub.devices import DeviceError
 from pihome_hub.relays import RelayError
 from pihome_hub.sensors import SensorError
 from pihome_hub.storage import StorageError, prepare_database
@@ -90,7 +91,7 @@ def main() -> None:
     # with the wrong exit code, which a restarting unit turns into a crash loop.
     try:
         relay_service = build_relay_service(settings)
-    except (RelayError, SensorError, AutomationError) as exc:
+    except (RelayError, SensorError, AutomationError, DeviceError) as exc:
         _exit_with(str(exc))
 
     # Past this line the pins are claimed and each relay has been driven to its
@@ -110,7 +111,14 @@ def main() -> None:
         try:
             check_configuration(settings, relay_service)
             prepare_database(settings.database_path)
-        except (RelayError, SensorError, AutomationError, StorageError, WebClientError) as exc:
+        except (
+            RelayError,
+            SensorError,
+            AutomationError,
+            DeviceError,
+            StorageError,
+            WebClientError,
+        ) as exc:
             _exit_with(str(exc))
         except Exception as exc:
             # Everything above names the errors it expects, which is right, and is

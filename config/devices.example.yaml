@@ -1,0 +1,28 @@
+# Copy to config/devices.yaml and edit — that file is git-ignored, this one is not.
+#
+#   cp config/devices.example.yaml config/devices.yaml
+#
+# HTTP devices this hub polls. Unlike a sensor, which pushes readings when it has
+# one, a device here is asked: the hub makes the request, on an interval, and keeps
+# the answer.
+#
+# Declared rather than discovered. An announcement naming an id that is not listed
+# here is refused with 404, so the device key cannot be used to make this hub start
+# calling an address of somebody else's choosing.
+#
+# What is *not* here: the address, and the key. A device generates its key at first
+# boot and gets its address from DHCP, so neither is something a file written in
+# advance can be right about — both arrive in the announcement the device sends on
+# boot. See docs/devices.md.
+#
+# kind decides what this hub knows how to ask, and where:
+#
+#   pc-power — an esp32c3-pc-power board across a PC's front-panel header.
+#              Polled at /v1/power.
+#
+# The file is optional. Omit it entirely for a deployment with no HTTP devices.
+
+devices:
+  - id: workshop-pc
+    label: "Workshop PC"
+    kind: pc-power

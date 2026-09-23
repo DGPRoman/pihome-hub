@@ -21,7 +21,9 @@ import pihome_hub
 #: so ``extra`` has nothing to guard: they are built from values already validated.
 _OUTPUT_ONLY: Final = {
     "AutomationRuleCollection",
+    "DeviceCollection",
     "DeviceSnapshot",
+    "DeviceStatus",
     "HealthResponse",
     "RelayCollection",
     "RelayState",

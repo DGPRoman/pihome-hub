@@ -115,6 +115,22 @@ class Settings(BaseSettings):
     sensor_config_path: Path = Path("config/sensors.yaml")
     automation_config_path: Path = Path("config/automation.yaml")
 
+    # -- Devices -------------------------------------------------------------
+    #: Which HTTP devices this hub talks to. Declared rather than discovered, for
+    #: the same reason sensors are: an id nobody wrote down is not one to trust
+    #: with an address this service will then make requests to.
+    device_config_path: Path = Path("config/devices.yaml")
+
+    #: How often every announced device is asked for its status. Thirty seconds is
+    #: chosen against what the reading is for: somebody glancing at a dashboard to
+    #: see whether a machine is on. Polling faster would spend a device's radio and
+    #: this card's write cycles to shorten a wait nobody is having.
+    device_poll_seconds: Annotated[float, Field(gt=0)] = 30.0
+    #: How long one device has to answer before it is recorded as unreachable. The
+    #: deadline covers the whole exchange, not each read, so a device drip-feeding
+    #: a response cannot hold the cycle open past it.
+    device_poll_timeout_seconds: Annotated[float, Field(gt=0)] = 5.0
+
     # -- State ---------------------------------------------------------------
     #: Where accounts and sessions live. The default follows the unit rather than
     #: repeating it: systemd exports STATE_DIRECTORY for every StateDirectory= it
@@ -151,10 +167,20 @@ class Settings(BaseSettings):
     #: from ``relay_api_key`` so firmware flashed onto a sensor cannot also
     #: drive relays directly if that firmware is ever extracted.
     sensor_api_key: SecretStr
+    #: Authenticates devices announcing where they are and what key to ask them
+    #: with. Optional, unlike the other two, because a deployment with no HTTP
+    #: devices has nothing to announce — and unset is a closed door rather than an
+    #: open one: with no value to compare against, the announcement route refuses
+    #: every request. Declaring a device without setting this stops the service at
+    #: startup rather than leaving a route nothing can reach.
+    device_api_key: SecretStr | None = None
 
-    @field_validator("relay_api_key", "sensor_api_key")
+    @field_validator("relay_api_key", "sensor_api_key", "device_api_key")
     @classmethod
-    def _reject_weak_keys(cls, value: SecretStr) -> SecretStr:
+    def _reject_weak_keys(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+
         secret = value.get_secret_value()
 
         if len(secret) < MIN_API_KEY_LENGTH:

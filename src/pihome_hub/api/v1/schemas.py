@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pihome_hub.accounts import MAX_PASSWORD_LENGTH, Role
 from pihome_hub.automation import AutomationRule
+from pihome_hub.devices import DeviceStatus
 from pihome_hub.sensors import DeviceSnapshot
 
 
@@ -62,6 +63,19 @@ class SensorCollection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     sensors: list[DeviceSnapshot]
+
+
+class DeviceCollection(BaseModel):
+    """Every declared HTTP device, whether or not it has ever announced itself.
+
+    Including the ones never heard from, deliberately. A device that was declared
+    and has never called is the most interesting row in the list, and a collection
+    built from what announced would be one that leaves it out.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    devices: list[DeviceStatus]
 
 
 class AutomationRuleCollection(BaseModel):
