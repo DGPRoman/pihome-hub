@@ -117,12 +117,16 @@ else
 # become part of the value and \$FOO is not expanded.
 PIHOME_RELAY_API_KEY=$(key)
 PIHOME_SENSOR_API_KEY=$(key)
+# Announcements from HTTP devices. Generated now so that declaring a device later
+# is one file to edit rather than two — nothing can use it until one is declared.
+PIHOME_DEVICE_API_KEY=$(key)
 PIHOME_GPIO_BACKEND=$backend
 PIHOME_PORT=5002
 PIHOME_RELAY_CONFIG_PATH=$RELAY_CONFIG
 # Optional: a path that does not exist means the feature is simply not in use.
 PIHOME_SENSOR_CONFIG_PATH=$CONFIG_DIR/sensors.yaml
 PIHOME_AUTOMATION_CONFIG_PATH=$CONFIG_DIR/automation.yaml
+PIHOME_DEVICE_CONFIG_PATH=$CONFIG_DIR/devices.yaml
 # Reaching this from the LAN means setting PIHOME_HOST, and it speaks plain HTTP
 # with a static key — put a VPN or a TLS proxy in front, not an open port.
 EOF

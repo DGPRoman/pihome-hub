@@ -10,20 +10,24 @@ notes; this describes the shape.
 flowchart TB
     phone["Phone / web app<br/>relay key"]
     firmware["ESP32 sensor<br/>sensor key"]
+    device["HTTP device<br/>device key"]
 
     subgraph http["api/ — the only layer that knows about HTTP"]
         system["system.py<br/>/health"]
         relayroutes["v1/relays.py"]
         sensorroutes["v1/sensors.py"]
         ruleroutes["v1/automation.py"]
+        deviceroutes["v1/devices.py"]
     end
 
-    guard["security.py + ratelimit.py<br/>two keys, two scopes"]
+    guard["security.py + ratelimit.py<br/>three keys, three scopes"]
 
     subgraph core["domain — no FastAPI, no request objects"]
         relayservice["relays/service.py<br/>logical on/off"]
         store["sensors/store.py<br/>latest reading per device"]
         engine["automation/engine.py<br/>rules and hold timers"]
+        registry["devices/registry.py<br/>address and last answer"]
+        poller["devices/poller.py<br/>asks, on an interval"]
     end
 
     seam["relays/backend.py<br/><b>RelayBackend</b> protocol"]
@@ -32,18 +36,27 @@ flowchart TB
 
     phone --> relayroutes
     firmware --> sensorroutes
+    device --> deviceroutes
     relayroutes -.->|depends on| guard
     sensorroutes -.->|depends on| guard
     ruleroutes -.->|depends on| guard
+    deviceroutes -.->|depends on| guard
     relayroutes --> relayservice
     ruleroutes --> engine
     sensorroutes --> store
     sensorroutes --> engine
+    deviceroutes --> registry
+    poller --> registry
+    poller -->|GET, with that device's key| device
     engine --> relayservice
     relayservice --> seam
     seam --> mock
     seam --> real
 ```
+
+The arrow from `poller` back out to the device is the only one in this diagram that
+leaves the process. Everything else here answers a request; that one makes one, which
+is why the rules about what an address may be live in the domain and not in a route.
 
 `/health` is outside the guard: it is the one endpoint that takes no key, which is what
 makes it useful for saying whether the service is up without handing out a credential.
@@ -54,9 +67,11 @@ Three rules, each of which holds today and is asserted by
 [`tests/test_layering.py`](../tests/test_layering.py):
 
 1. **No domain package imports FastAPI, Starlette, uvicorn, or `pihome_hub.api`.** Every
-   one of them — `relays`, `sensors`, `automation`, `storage`, `accounts` — is plain
-   Python. That is why the whole of the automation engine can be tested by calling it,
-   with no client and no event loop ceremony beyond `asyncio`.
+   one of them — `relays`, `sensors`, `automation`, `storage`, `accounts`, `devices` —
+   is plain Python. That is why the whole of the automation engine can be tested by
+   calling it, with no client and no event loop ceremony beyond `asyncio`. `devices`
+   makes outbound HTTP requests, which is not the same thing: it holds an HTTP client,
+   never a request object, and it would work the same if nothing ever called in.
 2. **`relays` and `sensors` know nothing of each other, and nothing of `automation`.**
    The dependency runs one way: automation reaches into both, because a rule is by
    definition a statement about a sensor and a relay. Neither of them needs a rule to
@@ -64,6 +79,8 @@ Three rules, each of which holds today and is asserted by
    domain keeps its state in is that domain's business, and who may log in is not a
    statement about any particular relay. `accounts` imports `storage`, and that is the
    only edge between the two — rows in one direction, never relays in the other.
+   `devices` imports `storage` and nothing else: a device is polled and reported, and
+   anything that let one switch a circuit would be `automation`'s to say.
 3. **Only `app.py` chooses a backend.** The route modules never import `mock` or `gpio`;
    they receive a `RelayService` that already has one.
 
