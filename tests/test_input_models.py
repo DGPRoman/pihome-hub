@@ -22,6 +22,7 @@ import pihome_hub
 _OUTPUT_ONLY: Final = {
     "AutomationRuleCollection",
     "DeviceSnapshot",
+    "DeviceStatus",
     "HealthResponse",
     "RelayCollection",
     "RelayState",

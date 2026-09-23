@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     sensor_config_path: Path = Path("config/sensors.yaml")
     automation_config_path: Path = Path("config/automation.yaml")
 
+    # -- Devices -------------------------------------------------------------
+    #: Which HTTP devices this hub talks to. Declared rather than discovered, for
+    #: the same reason sensors are: an id nobody wrote down is not one to trust
+    #: with an address this service will then make requests to.
+    device_config_path: Path = Path("config/devices.yaml")
+
     # -- State ---------------------------------------------------------------
     #: Where accounts and sessions live. The default follows the unit rather than
     #: repeating it: systemd exports STATE_DIRECTORY for every StateDirectory= it

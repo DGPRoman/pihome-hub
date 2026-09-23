@@ -2,7 +2,7 @@
 
 No migration framework. The alternative is a dependency, a table, and a directory
 of numbered files to express what a tuple already says — for a schema that will
-hold accounts and their sessions and is not going to sprawl.
+holds accounts, their sessions and a row per device, and is not going to sprawl.
 
 Rules for anything added here: append, never edit. A migration that has run on a
 Pi is history, and rewriting it means two installations disagree about what
@@ -52,6 +52,33 @@ MIGRATIONS: Final[tuple[str, ...]] = (
     -- Expired rows are removed in bulk when a session is opened, which is a scan
     -- over this rather than over the table.
     CREATE INDEX sessions_expires_at ON sessions (expires_at);
+    """,
+    # 3 — where each declared HTTP device announced itself, and how it last answered.
+    """
+    CREATE TABLE devices (
+        -- The id an operator declared in config/devices.yaml. No foreign key to
+        -- point at: which devices exist is a statement in a file, not a row here,
+        -- and rows whose id left that file are dropped at startup.
+        id                TEXT PRIMARY KEY,
+        -- Origin only, normalised, always a private address literal.
+        address           TEXT NOT NULL,
+        -- In the clear, unlike a password: this is presented to the device on every
+        -- poll, so it has to be replayable and a hash would be useless. The file is
+        -- chmod 0600 inside a 0700 state directory, which is the whole protection.
+        api_key           TEXT NOT NULL,
+        firmware          TEXT,
+        announced_at      TEXT    NOT NULL,
+        -- Everything below is written by the poller and reset by an announcement.
+        reachable         INTEGER CHECK (reachable IN (0, 1)),
+        last_polled_at    TEXT,
+        last_seen_at      TEXT,
+        unreachable_since TEXT,
+        last_error        TEXT,
+        -- The device's own status document as JSON text. Stored rather than parsed
+        -- into columns so that a field the firmware adds costs no migration here.
+        state             TEXT
+    ) WITHOUT ROWID;
+    -- WITHOUT ROWID for the same reason as sessions: every lookup is by that key.
     """,
 )
 
