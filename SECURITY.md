@@ -72,9 +72,10 @@ project with no commercial support and no bug bounty.
   with `secrets.token_urlsafe`, as `.env.example` shows.
 - **Only a proxy on the Pi itself is trusted.** `X-Forwarded-For` is honoured when the
   connection comes from loopback and ignored from anywhere else, because honouring it
-  unconditionally would let any caller forge its own identity and bypass the limiter.
-  Behind a reverse proxy on another machine every request therefore looks like it comes
-  from that proxy, and rate limiting belongs in the proxy instead.
+  unconditionally would let any caller forge its own identity — bypassing the limiter,
+  and passing for the home network when a session is renewed. Behind a reverse proxy on
+  another machine every request therefore looks like it comes from that proxy, and rate
+  limiting belongs in the proxy instead.
 - **No protection against a compromised client.** A key held by a phone or a sensor is
   a key an attacker who owns that device also holds.
 - **Offline guessing of a stolen hash is slowed, not prevented.** `scrypt` at 16 MiB is
@@ -109,10 +110,14 @@ project with no commercial support and no bug bounty.
 - **A session cannot be revoked from another device.** `pihome-hub-admin` on the Pi can
   end them — by changing the password, or by disabling the account — but there is no
   "sign out everywhere" for someone holding only a phone.
-- **A session lasts 30 days from login regardless of use.** A token copied off a device
-  stays valid for the remainder of that window unless the password is changed or the
-  account disabled. Shorten `PIHOME_SESSION_LIFETIME_SECONDS` if that trade is wrong for
-  your household.
+- **A session in use at home does not run out.** Reading it from the home network renews
+  it, at most once a day. A token copied off a device therefore stays valid for 30 days
+  after it was last renewed — and for as long after that as somebody keeps presenting it
+  from inside `PIHOME_SESSION_RENEWAL_NETWORKS`, which takes being on that network. To
+  end it for good, delete the account and invite the person again, or change the password
+  of an account that has one: disabling only suspends a session, and enabling the account
+  brings it back. `PIHOME_SESSION_RENEWAL_NETWORKS=[]` makes every session end 30 days
+  after login again; `PIHOME_SESSION_LIFETIME_SECONDS` shortens that window.
 - **No audit trail.** Nothing records who acted, only what the service did.
 - **Physical access wins.** Anyone at the distribution board does not need this API.
 

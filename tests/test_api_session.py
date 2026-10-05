@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 
@@ -13,6 +14,8 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 
 from pihome_hub.accounts import Role, SessionStore, UserStore
+from pihome_hub.accounts import sessions as sessions_module
+from pihome_hub.accounts.sessions import RENEWAL_INTERVAL
 from pihome_hub.app import create_app
 from pihome_hub.config import Settings
 from pihome_hub.relays import RelayService
@@ -324,3 +327,185 @@ class TestGuessingPasswords:
             still_works = client.get("/v1/relays", headers=RELAY_HEADERS)
 
         assert still_works.status_code == HTTPStatus.OK
+
+
+#: A phone on the home Wi-Fi, and an address on the far side of the internet (from
+#: the range RFC 5737 sets aside for documentation).
+HOME = ("192.168.1.20", 50000)
+OUTSIDE = ("203.0.113.9", 50000)
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class TestRenewal:
+    """Reading the session renews it — from home, and at most once a day."""
+
+    @pytest.fixture
+    def clock(self) -> _Clock:
+        return _Clock()
+
+    @pytest.fixture
+    def store(self, app: FastAPI, settings: Settings, clock: _Clock) -> SessionStore:
+        """The app's own store, on a clock the test can wind."""
+        store = SessionStore(
+            settings.database_path,
+            lifetime=timedelta(seconds=settings.session_lifetime_seconds),
+            clock=clock,
+        )
+        app.state.sessions = store
+        return store
+
+    @pytest.fixture
+    def token(self, users: UserStore, store: SessionStore, clock: _Clock) -> str:
+        """A session opened a day ago, so the next read from home is due to renew it."""
+        roman = users.get("roman")
+        token, _ = store.create(roman)
+        clock.now += RENEWAL_INTERVAL
+        return token
+
+    @contextmanager
+    def _from(self, app: FastAPI, address: tuple[str, int], token: str) -> Iterator[TestClient]:
+        with TestClient(app, client=address) as client:
+            client.cookies.set(SESSION_COOKIE, token)
+            yield client
+
+    def test_a_read_from_home_renews_a_day_old_session(
+        self, app: FastAPI, settings: Settings, store: SessionStore, token: str, clock: _Clock
+    ) -> None:
+        with self._from(app, HOME, token) as client:
+            response = client.get(LOGIN)
+
+        assert response.status_code == HTTPStatus.OK
+        lifetime = timedelta(seconds=settings.session_lifetime_seconds)
+        expected = clock.now + lifetime
+        assert datetime.fromisoformat(response.json()["expires_at"]) == expected
+        resolved = store.resolve(token)
+        assert resolved is not None
+        assert resolved.expires_at == expected, "the renewal was answered but not stored"
+
+    def test_the_cookie_comes_back_with_the_same_token_and_a_full_lifetime(
+        self, app: FastAPI, settings: Settings, token: str
+    ) -> None:
+        """So a browser keeps it for as long as the hub now will."""
+        with self._from(app, HOME, token) as client:
+            response = client.get(LOGIN)
+
+        assert response.cookies[SESSION_COOKIE] == token
+        attributes = _set_cookie_attributes(response)
+        assert attributes["max-age"] == str(settings.session_lifetime_seconds)
+        assert attributes["httponly"]
+        assert attributes["samesite"].lower() == "strict"
+        assert attributes["path"] == "/"
+
+    def test_a_second_read_the_same_day_sends_nothing_and_writes_nothing(
+        self, app: FastAPI, token: str, clock: _Clock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with self._from(app, HOME, token) as client:
+            client.get(LOGIN)
+            clock.now += RENEWAL_INTERVAL - timedelta(minutes=1)
+
+            def refuse(*args: object, **kwargs: object) -> None:
+                raise AssertionError("a read within the day opened a write transaction")
+
+            monkeypatch.setattr(sessions_module, "writing", refuse)
+            response = client.get(LOGIN)
+
+        assert response.status_code == HTTPStatus.OK
+        assert "set-cookie" not in response.headers
+
+    def test_a_read_from_outside_renews_nothing_and_writes_nothing(
+        self,
+        app: FastAPI,
+        store: SessionStore,
+        token: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A token copied off a phone cannot be kept alive from somewhere else."""
+        before = store.resolve(token)
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise AssertionError("a read from outside opened a write transaction")
+
+        monkeypatch.setattr(sessions_module, "writing", refuse)
+        with self._from(app, OUTSIDE, token) as client:
+            response = client.get(LOGIN)
+
+        assert response.status_code == HTTPStatus.OK
+        assert "set-cookie" not in response.headers
+        assert before is not None
+        assert datetime.fromisoformat(response.json()["expires_at"]) == before.expires_at
+
+    def test_a_client_without_an_address_renews_nothing(
+        self, app: FastAPI, store: SessionStore, token: str
+    ) -> None:
+        """Not knowing where a request came from is not a reason to trust it."""
+        before = store.resolve(token)
+        with TestClient(app) as client:
+            client.cookies.set(SESSION_COOKIE, token)
+            response = client.get(LOGIN)
+
+        assert "set-cookie" not in response.headers
+        assert store.resolve(token) == before
+
+    def test_an_ipv4_address_in_ipv6_form_is_judged_as_the_address_it_is(
+        self, app: FastAPI, token: str
+    ) -> None:
+        """A dual-stack listener reports IPv4 peers this way."""
+        with self._from(app, ("::ffff:192.168.1.20", 50000), token) as client:
+            response = client.get(LOGIN)
+
+        assert "set-cookie" in response.headers
+
+    def test_no_other_route_renews(self, app: FastAPI, store: SessionStore, token: str) -> None:
+        """Only this read may write, so every other request stays write-free."""
+        before = store.resolve(token)
+        with self._from(app, HOME, token) as client:
+            response = client.get("/v1/relays")
+
+        assert response.status_code == HTTPStatus.OK
+        assert "set-cookie" not in response.headers
+        assert store.resolve(token) == before
+
+    def test_an_expired_session_is_still_refused(
+        self, app: FastAPI, settings: Settings, token: str, clock: _Clock
+    ) -> None:
+        clock.now += timedelta(seconds=settings.session_lifetime_seconds)
+
+        with self._from(app, HOME, token) as client:
+            response = client.get(LOGIN)
+
+        assert response.status_code == HTTPStatus.UNAUTHORIZED
+
+    def test_a_relay_key_is_still_no_session(self, app: FastAPI) -> None:
+        with TestClient(app, client=HOME) as client:
+            response = client.get(LOGIN, headers=RELAY_HEADERS)
+
+        assert response.status_code == HTTPStatus.UNAUTHORIZED
+
+    def test_an_empty_list_of_networks_turns_renewal_off(
+        self, relay_service: RelayService, clock: _Clock
+    ) -> None:
+        settings = build_settings(session_renewal_networks=[])
+        prepare_database(settings.database_path)
+        roman = UserStore(settings.database_path).create("roman", PASSWORD, Role.ADMIN)
+        app = create_app(settings, relay_service=relay_service)
+        store = SessionStore(
+            settings.database_path,
+            lifetime=timedelta(seconds=settings.session_lifetime_seconds),
+            clock=clock,
+        )
+        app.state.sessions = store
+        token, opened = store.create(roman)
+        clock.now += RENEWAL_INTERVAL
+
+        with self._from(app, HOME, token) as client:
+            response = client.get(LOGIN)
+
+        assert "set-cookie" not in response.headers
+        assert datetime.fromisoformat(response.json()["expires_at"]) == opened.expires_at
