@@ -70,10 +70,11 @@ project with no commercial support and no bug bounty.
 - **Key length is checked; key entropy is not.** A 32-character passphrase passes
   validation and may carry far less entropy than 32 random characters. Generate keys
   with `secrets.token_urlsafe`, as `.env.example` shows.
-- **No trusted-proxy support.** `X-Forwarded-For` is deliberately ignored, because
-  honouring it unconditionally would let any caller forge its own identity and bypass
-  the limiter. Behind a reverse proxy every request therefore looks like it comes from
-  the proxy, and rate limiting belongs in the proxy instead.
+- **Only a proxy on the Pi itself is trusted.** `X-Forwarded-For` is honoured when the
+  connection comes from loopback and ignored from anywhere else, because honouring it
+  unconditionally would let any caller forge its own identity and bypass the limiter.
+  Behind a reverse proxy on another machine every request therefore looks like it comes
+  from that proxy, and rate limiting belongs in the proxy instead.
 - **No protection against a compromised client.** A key held by a phone or a sensor is
   a key an attacker who owns that device also holds.
 - **Offline guessing of a stolen hash is slowed, not prevented.** `scrypt` at 16 MiB is

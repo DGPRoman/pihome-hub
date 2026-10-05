@@ -263,11 +263,13 @@ cannot forge a motion event to reach a relay through a rule.
 | `sensor:<peer>` | Sharing one bucket would let a caller holding either key clear the other's failure count on every success, so a leaked sensor key would double as a rate-limit eraser |
 | `probe:<peer>` | For the pre-dependency check below, so buggy firmware cannot exhaust the allowance protecting the relay key |
 
-`<peer>` is the connection's own address, normalised: IPv6 collapses to its `/64`, because
-a routed prefix holds ~1.8e19 addresses and counting per address would hand out a fresh
-allowance per guess. IPv4 stays per address, since those are scarce and shared behind NAT.
-`X-Forwarded-For` is deliberately ignored — trusting it without knowing the proxy would
-let any caller forge its identity.
+`<peer>` is the address the request came from, normalised: IPv6 collapses to its `/64`,
+because a routed prefix holds ~1.8e19 addresses and counting per address would hand out a
+fresh allowance per guess. IPv4 stays per address, since those are scarce and shared behind
+NAT. `X-Forwarded-For` is believed only when the connection comes from loopback — a reverse
+proxy on the Pi itself — and ignored from anywhere else, where trusting it would let any
+caller forge its identity. `__main__` passes uvicorn that rule rather than inheriting its
+default, which an environment variable could widen.
 
 One wrinkle worth knowing about. FastAPI parses a request body **before** solving
 dependencies, so a body that is not valid JSON raises before authentication ever runs.
@@ -461,5 +463,6 @@ looking in the wrong place.
 - **No history.** Trends need retention and a pruning story on a card with finite write
   cycles; that does not earn its place for switching yard lights.
 - **No pin read-back.** See "Reading relay state" above.
-- **No `X-Forwarded-For`, no TLS, no LAN bind by default.** Reaching the service from
+- **No TLS, no LAN bind by default, and `X-Forwarded-For` only from a proxy on the Pi
+  itself.** Reaching the service from
   elsewhere is a VPN or a reverse proxy's job — see [SECURITY.md](../SECURITY.md).

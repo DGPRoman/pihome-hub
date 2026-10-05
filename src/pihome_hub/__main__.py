@@ -135,6 +135,13 @@ def main() -> None:
             host=settings.host,
             port=settings.port,
             server_header=False,
+            # The address a request came from decides its rate-limit bucket and
+            # whether reading a session may renew it. X-Forwarded-For is believed
+            # from a reverse proxy on this machine and from nowhere else — stated
+            # here rather than left to uvicorn's default, which an environment
+            # variable can widen without this code knowing.
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1",
             access_log=settings.access_log,
             # Logging is already configured by create_app(); leave it alone.
             log_config=None,

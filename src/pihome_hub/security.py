@@ -86,10 +86,11 @@ def normalise_client(host: str) -> str:
 def client_key(request: Request) -> str:
     """Identify the peer for rate-limiting purposes.
 
-    Derived from the address that opened the connection. No ``X-Forwarded-For``
-    handling: trusting that header without knowing which proxy sits in front would let
-    any caller forge its own identity and sidestep the limiter entirely. Behind a
-    reverse proxy, rate limiting belongs in the proxy — see SECURITY.md.
+    Derived from the address that opened the connection — unless that is this
+    machine's own loopback, when it is the address a reverse proxy on the Pi passed in
+    ``X-Forwarded-For``. ``__main__`` tells uvicorn to trust the header from loopback
+    and nowhere else: from anywhere else it would let any caller forge its own
+    identity and sidestep the limiter entirely. See SECURITY.md.
     """
     if request.client is None:
         return _UNKNOWN_CLIENT
