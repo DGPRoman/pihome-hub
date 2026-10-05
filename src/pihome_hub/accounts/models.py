@@ -18,6 +18,9 @@ MAX_USERNAME_LENGTH: Final = 32
 #: a username is typed at a prompt, printed in a table and passed to a shell, and a
 #: name holding a space, a control character or a right-to-left mark is a name that
 #: does not read the same everywhere it appears.
+#:
+#: Applied with ``fullmatch``. ``$`` also matches just before a trailing newline, so
+#: ``match`` let ``"olya\n"`` through: an account that lists exactly like ``olya``.
 _USERNAME_PATTERN: Final = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$")
 
 
@@ -71,7 +74,7 @@ def check_username(username: str) -> str:
         )
         raise InvalidUsernameError(msg)
 
-    if not _USERNAME_PATTERN.match(username):
+    if not _USERNAME_PATTERN.fullmatch(username):
         msg = (
             f"username {username!r} must be letters and digits, optionally separated by "
             "'.', '_' or '-'"
