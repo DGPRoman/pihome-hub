@@ -18,7 +18,7 @@ project with no commercial support and no bug bounty.
 
 | Threat | Mitigation |
 | --- | --- |
-| Unauthenticated relay control | Every `/v1` route requires an API key or a session; `/health` is the only unauthenticated endpoint and returns no build detail |
+| Unauthenticated relay control | Every `/v1` route requires an API key or a session; `/health` returns no build detail; `/app/pihome.apk` and `/app/android.json`, the Android app for a phone joining by invitation, answer `404` until an operator installs one, and the app is open source |
 | A read-only account switching a mains circuit | Every mutating `/v1` route requires `operator` or `admin`. A session below that is refused `403`, which is a different answer from `401` and a different thing for a client to do about it |
 | A key from firmware administering accounts | The account routes take an admin session and never read `X-API-Key`. The relay key, which opens every relay route, is a `401` on all of them |
 | An invitation link used twice, or by whoever it was forwarded to | Single use: redeeming deletes the row inside the write transaction, so two presentations at once cannot both succeed. Fifteen minutes, fixed, checked by the hub. Issuing another replaces it, and an admin can revoke it |

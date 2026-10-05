@@ -1,9 +1,12 @@
-"""``pihome-hub-admin`` — creating and managing the accounts that may log in.
+"""``pihome-hub-admin`` — the accounts that may log in, and the app phones are offered.
 
 A separate command rather than an HTTP route, for the obvious reason: the first
 admin cannot be created through an API that requires an admin. It is also the right
 shape for the job — account management is something an operator does once, at a
 terminal on the Pi, not something a running service needs to expose.
+
+The ``app`` commands put the Android app's APK where the hub offers it to phones
+joining by invitation. They need no database, and so open none.
 
 Nothing here takes a password as an argument. A command line is visible in ``ps``
 to every account on the machine and is written to shell history, and a password
@@ -22,7 +25,8 @@ from pathlib import Path
 from typing import Final
 
 from pihome_hub.accounts import AccountError, Role, SessionStore, UserStore, check_username
-from pihome_hub.config import resolve_database_path
+from pihome_hub.android import AndroidApp, NotAnApkError, install_apk
+from pihome_hub.config import resolve_android_app_path, resolve_database_path
 from pihome_hub.storage import StorageError, prepare_database
 
 PROGRAM: Final = "pihome-hub-admin"
@@ -37,13 +41,17 @@ class AdminError(Exception):
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    path: Path = args.database if args.database is not None else resolve_database_path()
 
     try:
-        _refuse_to_write_as_the_wrong_user(path)
-        prepare_database(path)
-        args.run(args, UserStore(path), SessionStore(path))
-    except (AdminError, AccountError, StorageError) as exc:
+        if args.command == "app":
+            target: Path = args.path if args.path is not None else resolve_android_app_path()
+            args.run_app(args, target)
+        else:
+            path: Path = args.database if args.database is not None else resolve_database_path()
+            _refuse_to_write_as_the_wrong_user(path)
+            prepare_database(path)
+            args.run(args, UserStore(path), SessionStore(path))
+    except (AdminError, AccountError, StorageError, NotAnApkError, OSError) as exc:
         sys.stderr.write(f"{PROGRAM}: {exc}\n")
         return EXIT_FAILURE
     except (KeyboardInterrupt, EOFError):
@@ -127,13 +135,43 @@ def _delete(args: argparse.Namespace, store: UserStore, sessions: SessionStore) 
     _out(f"{args.username!r} deleted")
 
 
+_APP_AS_ROOT: Final = "an app installed there as root is one only root can replace"
+
+
+def _app_install(args: argparse.Namespace, target: Path) -> None:
+    _refuse_to_write_as_the_wrong_user(target, _APP_AS_ROOT)
+    installed = install_apk(args.file, target)
+    _out(f"installed {target} ({installed.size} bytes), sha256 {installed.sha256}")
+    _out("phones joining by invitation are offered it from the join page")
+
+
+def _app_show(args: argparse.Namespace, target: Path) -> None:
+    found = AndroidApp(target).describe()
+    if found is None:
+        _out(f"no app installed at {target}. Install one with: {PROGRAM} app install <file.apk>")
+        return
+    _out(f"{target} ({found.size} bytes), sha256 {found.sha256}")
+
+
+def _app_remove(args: argparse.Namespace, target: Path) -> None:
+    _refuse_to_write_as_the_wrong_user(target, _APP_AS_ROOT)
+    if not target.exists():
+        _out(f"no app installed at {target}")
+        return
+    target.unlink()
+    _out(f"removed {target}; the join page no longer offers the app")
+
+
 # -- Plumbing ----------------------------------------------------------------
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Manage the accounts that may log in to this hub.",
+        description=(
+            "Manage the accounts that may log in to this hub, and the Android app it "
+            "offers to phones joining by invitation."
+        ),
         epilog=(
             "Passwords are read from the terminal, or from stdin when there is none, "
             "and never taken as arguments."
@@ -182,6 +220,29 @@ def _build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     delete.set_defaults(run=_delete)
 
+    app = commands.add_parser("app", help="the Android app offered to phones joining by invitation")
+    app.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "where the hub keeps the APK. Defaults to PIHOME_ANDROID_APP_PATH, or to the "
+            "state directory the systemd unit declares."
+        ),
+    )
+    app_commands = app.add_subparsers(dest="app_command", required=True)
+
+    install = app_commands.add_parser("install", help="offer this APK, replacing any before it")
+    install.add_argument("file", type=Path)
+    install.set_defaults(run_app=_app_install)
+
+    show = app_commands.add_parser("show", help="which APK is offered, and its checksum")
+    show.set_defaults(run_app=_app_show)
+
+    remove = app_commands.add_parser("remove", help="stop offering the app")
+    remove.set_defaults(run_app=_app_remove)
+
     return parser
 
 
@@ -198,13 +259,17 @@ def _read_password() -> str:
     return first
 
 
-def _refuse_to_write_as_the_wrong_user(path: Path) -> None:
-    """Stop root leaving the service a database it will not be able to write.
+def _refuse_to_write_as_the_wrong_user(
+    path: Path,
+    consequence: str = "a database written there as root is one the service cannot write",
+) -> None:
+    """Stop root leaving the service a file it will not be able to write.
 
     On a Pi the state directory belongs to the service account, and a file created
     inside it by root stays owned by root. systemd does not repair that, so the next
     start fails with "attempt to write a readonly database" — a symptom several
-    steps removed from its cause. Refusing here names both.
+    steps removed from its cause. Refusing here names both. An APK installed as root
+    would be served, but could then only be replaced as root, so it is refused too.
     """
     directory = path.parent
     if os.geteuid() != 0 or not directory.exists():
@@ -219,10 +284,7 @@ def _refuse_to_write_as_the_wrong_user(path: Path) -> None:
     except KeyError:
         owner = str(owner_id)
 
-    msg = (
-        f"{directory} belongs to {owner!r}, and a database written there as root is one "
-        f"the service cannot write. Run: sudo -u {owner} {PROGRAM} ..."
-    )
+    msg = f"{directory} belongs to {owner!r}, and {consequence}. Run: sudo -u {owner} {PROGRAM} ..."
     raise AdminError(msg)
 
 

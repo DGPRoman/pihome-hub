@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 
 from pihome_hub import __version__
 from pihome_hub.accounts import InvitationStore, SessionStore, UnknownUserError, UserStore
+from pihome_hub.android import AndroidApp
+from pihome_hub.api.android import router as android_router
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.devices import announce_router
@@ -331,6 +333,7 @@ def create_app(
         resolved.database_path,
         lifetime=timedelta(seconds=resolved.session_lifetime_seconds),
     )
+    app.state.android_app = AndroidApp(resolved.android_app_path)
     if relay_service is not None:
         app.state.relays = relay_service
 
@@ -350,6 +353,7 @@ def create_app(
     app.add_exception_handler(AutomationError, _unavailable_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.include_router(system_router)
+    app.include_router(android_router)
     app.include_router(session_router)
     app.include_router(users_router)
     app.include_router(relays_router)

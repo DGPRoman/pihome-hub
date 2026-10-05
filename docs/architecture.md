@@ -14,6 +14,7 @@ flowchart TB
 
     subgraph http["api/ — the only layer that knows about HTTP"]
         system["system.py<br/>/health"]
+        android["android.py<br/>/app — the Android app"]
         relayroutes["v1/relays.py"]
         sensorroutes["v1/sensors.py"]
         ruleroutes["v1/automation.py"]
@@ -58,8 +59,11 @@ The arrow from `poller` back out to the device is the only one in this diagram t
 leaves the process. Everything else here answers a request; that one makes one, which
 is why the rules about what an address may be live in the domain and not in a route.
 
-`/health` is outside the guard: it is the one endpoint that takes no key, which is what
-makes it useful for saying whether the service is up without handing out a credential.
+`/health` is outside the guard: it takes no key, which is what makes it useful for saying
+whether the service is up without handing out a credential. The only other routes outside it
+are `/app/pihome.apk` and `/app/android.json`, which offer the Android app to a phone that is
+joining by invitation and so has no session yet. They answer `404` until an operator installs
+an APK, so a hub that offers none looks as it did before.
 
 ## Layering, and the direction of every dependency
 
