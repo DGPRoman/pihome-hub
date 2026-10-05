@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pihome_hub import __version__
-from pihome_hub.accounts import SessionStore, UserStore
+from pihome_hub.accounts import SessionStore, UnknownUserError, UserStore
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.devices import announce_router
@@ -22,6 +22,7 @@ from pihome_hub.api.v1.devices import read_router as device_read_router
 from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
 from pihome_hub.api.v1.session import router as session_router
+from pihome_hub.api.v1.users import router as users_router
 from pihome_hub.automation import AutomationEngine, AutomationError, SunClock, load_automation
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.devices import (
@@ -226,7 +227,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 async def _not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Map an unknown relay or device id to 404 rather than letting it become a 500."""
+    """Map an unknown relay, device or account to 404 rather than letting it become a 500."""
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
@@ -335,6 +336,7 @@ def create_app(
     app.add_exception_handler(UnknownRelayError, _not_found_handler)
     app.add_exception_handler(UnknownDeviceError, _not_found_handler)
     app.add_exception_handler(UndeclaredDeviceError, _not_found_handler)
+    app.add_exception_handler(UnknownUserError, _not_found_handler)
     # Registered by the specific class, not by RelayError or SensorError: those are
     # the base classes of the two above, and a handler on a base class would swallow
     # the 404s into 503s.
@@ -348,6 +350,7 @@ def create_app(
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.include_router(system_router)
     app.include_router(session_router)
+    app.include_router(users_router)
     app.include_router(relays_router)
     app.include_router(read_router)
     app.include_router(ingest_router)

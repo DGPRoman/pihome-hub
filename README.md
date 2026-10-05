@@ -132,9 +132,10 @@ process. Copy [`config/relays.example.yaml`](config/relays.example.yaml) to
 
 ## Accounts
 
-Accounts live in the SQLite file the unit's `StateDirectory=` decides, and are managed
-with `pihome-hub-admin` rather than over HTTP — the first admin cannot be created through
-an API that requires an admin.
+Accounts live in the SQLite file the unit's `StateDirectory=` decides, and are created
+with `pihome-hub-admin` at a terminal on the Pi — the first admin cannot be created through
+an API that requires an admin. Once there is one, it can manage the `operator` and `viewer`
+accounts from a browser as well; see [From a browser](#from-a-browser).
 
 ```bash
 pihome-hub-admin create roman --role admin   # prompts for the password, twice
@@ -192,14 +193,29 @@ preflight this service will not answer, which is what stops a request the browse
 another site's behalf from switching a circuit. See SECURITY.md.
 
 **The API key still carries no role.** It is one shared secret with no account behind it,
-so a caller presenting it reaches every relay route as before. That is the limit worth
-knowing: while the web client talks to the hub through a proxy that attaches the key, a
-`viewer` using it is authorised by the key rather than by their role.
+so a caller presenting it reaches every relay route as before. The web client does not use
+it — the browser logs in for itself and the dev proxy attaches nothing — so for a person
+using that client, the role on their account is what decides.
+
+### From a browser
+
+An admin session can list the accounts, move one between `operator` and `viewer`, disable
+it, re-enable it, and delete it — the `/v1/users` routes in [the API table](#api). Changes
+take effect on that account's next request, as they do from the console.
+
+Two limits, both deliberate. **These routes take an admin session and never a key.** The
+relay key opens every relay route and none of these: it lives in firmware and scripts, and
+none of them has any business deciding who may log in. **And admin accounts are the
+console's.** Over HTTP no account is raised to `admin`, and an admin account is not changed,
+disabled or deleted. A session taken over in a browser therefore cannot make a second admin
+or lock the real one out — that needs a terminal on the Pi, which is where the first admin
+came from.
 
 ## API
 
 Everything under `/v1` requires an `X-API-Key` header or a session cookie, except the login
-route — which is what makes it the way in. Idempotent operations use `PUT`; `toggle` is a `POST`, since
+route — which is what makes it the way in. The account routes take only the cookie, and only
+an admin's. Idempotent operations use `PUT`; `toggle` is a `POST`, since
 replaying it does not produce the same result twice.
 
 | Method | Path | Purpose |
@@ -208,6 +224,9 @@ replaying it does not produce the same result twice.
 | `POST` | `/v1/session` | Log in — body `{"username": …, "password": …}`. Sets the session cookie |
 | `GET` | `/v1/session` | Who the cookie says you are. `401` if it says nothing usable |
 | `DELETE` | `/v1/session` | Log out. `204` either way |
+| `GET` | `/v1/users` | Every account, its role, and whether it is disabled — **admin session**, never a key |
+| `PATCH` | `/v1/users/{username}` | Change an `operator` or `viewer` account — body `{"role": "viewer"}`, `{"disabled": true}`, or both |
+| `DELETE` | `/v1/users/{username}` | Delete an `operator` or `viewer` account. `204`; its sessions end with it |
 | `GET` | `/v1/relays` | Every relay and its state |
 | `PUT` | `/v1/relays` | Set every relay to the same state — body `{"on": true}` |
 | `POST` | `/v1/relays/toggle` | Invert every relay independently |
@@ -497,13 +516,14 @@ side; the browser logs in for itself on the other, and the dev proxy no longer a
 API key. That last part is what made the rest count: a key admits its holder to every
 route, so while one was attached a role restricted a session and not that client.
 
-What is not here is administration over HTTP. Accounts exist only through
-`pihome-hub-admin` at a terminal on the Pi — there is no `/v1/users`, so creating one,
-changing a role or disabling one cannot be done over the network. Devices are declared in
-a file and `/v1/devices` only reads, which is [on purpose](docs/devices.md): declaring
-rather than discovering is what stops an announcement aiming the hub at an address nobody
-chose. Whether accounts should follow is a separate question, and one worth answering
-before writing routes that hand out authority.
+Administration over HTTP is partly here. An admin can list, change, disable and delete
+`operator` and `viewer` accounts from a browser; creating one still takes the console, and
+inviting somebody to an account with a one-time link instead is
+[#74](https://github.com/DGPRoman/pihome-hub/issues/74). Admin accounts stay the console's
+either way, so a session taken over in a browser cannot hand out the authority to take the
+rest. Devices are declared in a file and `/v1/devices` only reads, which is
+[on purpose](docs/devices.md): declaring rather than discovering is what stops an
+announcement aiming the hub at an address nobody chose.
 
 ## License
 

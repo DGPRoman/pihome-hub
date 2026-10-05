@@ -335,11 +335,8 @@ def require_role(minimum: Role) -> Callable[[Request, str | None], None]:
     firmware and into scripts, with no account behind it and nobody to hold one, so
     it carries no role and cannot be given one without inventing a user that
     nothing ever logs in to. A valid relay key is therefore admitted exactly as it
-    always has been. That is a real limit and not a tidy one: while the web client
-    still reaches the hub through a proxy that attaches the key, a viewer's browser
-    is authorised by the key rather than by their role. Narrowing what the key may
-    do is a separate decision with a live deployment behind it — SECURITY.md says
-    so, and pihome-hub-web#8 is the half that has to land first.
+    always has been, to every route built from this — which is why the account
+    routes are not: see :func:`require_admin_session`.
 
     The session is checked before the key, so a logged-in caller never touches the
     failure limiter and cannot spend another caller's allowance by arriving without
@@ -352,41 +349,64 @@ def require_role(minimum: Role) -> Callable[[Request, str | None], None]:
     ) -> None:
         session = current_session(request)
         if session is not None:
-            if _RANK[session.user.role] < _RANK[minimum]:
-                logger.warning(
-                    "request refused: role is not sufficient",
-                    extra={
-                        "username": session.user.username,
-                        "role": session.user.role.value,
-                        "required": minimum.value,
-                        "path": request.url.path,
-                    },
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=_FORBIDDEN_DETAIL,
-                )
-
-            if request.method not in _SAFE_METHODS and CSRF_HEADER not in request.headers:
-                # Only the cookie path. A key is not an ambient credential: a
-                # browser will not attach it to a request some other page made, so
-                # there is nothing here for a forged request to borrow.
-                logger.warning(
-                    "cookie-authenticated write refused: no CSRF header",
-                    extra={
-                        "username": session.user.username,
-                        "path": request.url.path,
-                        "method": request.method,
-                    },
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=_CSRF_DETAIL,
-                )
+            _require_rank(request, session, minimum)
+            _require_csrf_header(request, session)
             return
         _authenticate(request, Scope.RELAY, x_api_key)
 
     return dependency
+
+
+def _require_rank(request: Request, session: Session, minimum: Role) -> None:
+    if _RANK[session.user.role] < _RANK[minimum]:
+        logger.warning(
+            "request refused: role is not sufficient",
+            extra={
+                "username": session.user.username,
+                "role": session.user.role.value,
+                "required": minimum.value,
+                "path": request.url.path,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_FORBIDDEN_DETAIL,
+        )
+
+
+def _require_csrf_header(request: Request, session: Session) -> None:
+    if request.method not in _SAFE_METHODS and CSRF_HEADER not in request.headers:
+        # Only the cookie path. A key is not an ambient credential: a browser will
+        # not attach it to a request some other page made, so there is nothing
+        # here for a forged request to borrow.
+        logger.warning(
+            "cookie-authenticated write refused: no CSRF header",
+            extra={
+                "username": session.user.username,
+                "path": request.url.path,
+                "method": request.method,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_CSRF_DETAIL,
+        )
+
+
+def require_admin_session(request: Request) -> Session:
+    """Dependency for a route that administers the hub's accounts.
+
+    A session and nothing else. :func:`require_role` admits a valid relay key
+    whatever role it is asked for, which is right for the routes it guards — the
+    key has always switched relays — and would be wrong here: that key is
+    provisioned into firmware and scripts, and none of them has any business
+    deciding who may log in. So the key is never read, and a caller presenting
+    one is answered exactly as a caller presenting nothing.
+    """
+    session = require_session(request)
+    _require_rank(request, session, Role.ADMIN)
+    _require_csrf_header(request, session)
+    return session
 
 
 #: Read the house. The floor, and what every /v1 read route requires.
@@ -394,6 +414,9 @@ ViewerRequired = Depends(require_role(Role.VIEWER))
 
 #: Change the house. Every mutating relay route requires this.
 OperatorRequired = Depends(require_role(Role.OPERATOR))
+
+#: Change who may use it. Every account route requires this, and no key satisfies it.
+AdminSessionRequired = Depends(require_admin_session)
 
 
 def login_bucket(request: Request) -> str:

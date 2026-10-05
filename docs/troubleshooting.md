@@ -139,6 +139,8 @@ this service offers — the recovery would be editing SQLite by hand over SSH.
 | `404` | `{"detail":"no relay configured with id 'nope'"}` | Unknown id |
 | `422` | `{"detail":[{"type":"bool_type","loc":["body","on"],…}]}` | `{"on": "yes"}` is refused rather than guessed |
 | `429` | `{"detail":"Too many failed authentication attempts"}` | More than `PIHOME_AUTH_MAX_FAILURES` failures from this client within the window |
+| `401` on `/v1/users` with a key that works everywhere else | `{"detail":"Not authenticated"}` | The account routes take an admin's session, never a key. Log in |
+| `403` on `/v1/users/{username}` | `{"detail":"Admin accounts are managed with pihome-hub-admin on the hub, not over HTTP"}` | The target is an admin account. Use the console |
 
 Two keys, and the split is real: the sensor key pushes readings and can do nothing else,
 and the relay key cannot forge a reading. A sensor key on `GET /v1/relays` is a `401`, not
@@ -168,7 +170,9 @@ service — the counters are in memory.
 | `500` and `no such table: users` in the journal | The database exists but its schema was never applied | The service applies it at startup, so this means something else created the file. `systemctl restart pihome-hub` |
 | The web client logs in but the session does not stick | The client is not sending cookies — `fetch` omits them unless `credentials: 'include'` (or `'same-origin'` through a dev proxy) | Set it in the client |
 
-An account can be created only at a terminal on the Pi; there is no HTTP route for it.
+An account can be created only at a terminal on the Pi. An admin can change, disable or
+delete an `operator` or `viewer` account from a browser too, but not create one, and not
+touch an admin account at all.
 See the [`pihome-hub-admin` section above](#pihome-hub-admin-refuses) if that is failing.
 
 ## A sensor reads wrong
@@ -235,12 +239,14 @@ says when. Null right after you set a relay is correct — your write called the
 
 ## The web app shows nothing
 
-[pihome-hub-web](https://github.com/DGPRoman/pihome-hub-web) talks to this service through
-its dev-server proxy, which attaches the key in Node.
+[pihome-hub-web](https://github.com/DGPRoman/pihome-hub-web) logs in like any other client
+and holds no key. In development its dev-server proxy forwards `/v1` to this service and adds
+nothing on the way.
 
 | Symptom | Cause |
 | --- | --- |
-| Both panels report a rejected key | `PIHOME_RELAY_API_KEY` in the web app's own `.env` is unset or stale. It is read in `vite.config.ts`, not by the browser |
+| The login form refuses every password | There is no such account yet — `pihome-hub-admin list`, then `create` |
+| Switches are there but marked unavailable | The account is a `viewer`. That is the role being honest; `pihome-hub-admin role <name> operator` if it should not be |
 | Everything reports the hub did not answer | The hub is not running, or `PIHOME_HUB_ORIGIN` points elsewhere |
 | Panels load but sensors say "No readings yet" | Nothing has pushed. That is the hub being honest, not a client bug |
 

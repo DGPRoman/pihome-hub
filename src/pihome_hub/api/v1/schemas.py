@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pihome_hub.accounts import MAX_PASSWORD_LENGTH, Role
 from pihome_hub.automation import AutomationRule
@@ -117,3 +117,64 @@ class SessionResponse(BaseModel):
     username: str = Field(description="The account this session belongs to")
     role: Role = Field(description="What this account may do")
     expires_at: datetime = Field(description="When the session stops being accepted")
+
+
+class UserResponse(BaseModel):
+    """One account, as an admin sees it.
+
+    Built from :class:`~pihome_hub.accounts.User`, which never held a password hash,
+    so there is nothing here that could leak one. The numeric id stays inside the
+    hub: the name is what every route and every person uses.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    username: str = Field(description="The name the account logs in with")
+    role: Role = Field(description="What this account may do")
+    disabled: bool = Field(description="Whether the account is blocked from logging in")
+    created_at: datetime = Field(description="When the account was created")
+
+
+class UserCollection(BaseModel):
+    """Every account, in the order a person reading the list would expect."""
+
+    model_config = ConfigDict(frozen=True)
+
+    users: list[UserResponse]
+
+
+class UserChangeRequest(BaseModel):
+    """A change to an ``operator`` or ``viewer`` account at ``PATCH /v1/users/{username}``.
+
+    Every field is optional and absent means unchanged, but a body naming none of
+    them is refused: it can only be a client that meant to send something else.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    # Lax for this one field, because strict mode accepts only an instance of the
+    # enum and a JSON body can only ever hold its value. Lax enum validation is still
+    # exact — 'VIEWER', 0 and ['viewer'] are all refused — so nothing is guessed at.
+    role: Role | None = Field(
+        default=None,
+        strict=False,
+        description="`operator` or `viewer`. `admin` is granted on the hub's console only",
+    )
+    disabled: bool | None = Field(
+        default=None, description="Block the account from logging in, or let it in again"
+    )
+
+    @field_validator("role")
+    @classmethod
+    def _not_admin(cls, role: Role | None) -> Role | None:
+        if role is Role.ADMIN:
+            msg = "admin is granted with pihome-hub-admin on the hub, not over HTTP"
+            raise ValueError(msg)
+        return role
+
+    @model_validator(mode="after")
+    def _names_something(self) -> UserChangeRequest:
+        if self.role is None and self.disabled is None:
+            msg = "name at least one of 'role' and 'disabled'"
+            raise ValueError(msg)
+        return self

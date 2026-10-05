@@ -20,6 +20,8 @@ project with no commercial support and no bug bounty.
 | --- | --- |
 | Unauthenticated relay control | Every `/v1` route requires an API key or a session; `/health` is the only unauthenticated endpoint and returns no build detail |
 | A read-only account switching a mains circuit | Every mutating `/v1` route requires `operator` or `admin`. A session below that is refused `403`, which is a different answer from `401` and a different thing for a client to do about it |
+| A key from firmware administering accounts | The account routes take an admin session and never read `X-API-Key`. The relay key, which opens every relay route, is a `401` on all of them |
+| A browser session taken over and used to entrench itself | Over HTTP an admin manages `operator` and `viewer` accounts only: no account is raised to `admin`, and an admin account is not changed, disabled or deleted. Making a second admin, or locking the real one out, takes the console on the Pi |
 | Cross-site request forgery against a logged-in browser | A cookie-authenticated write must carry `X-Pihome-CSRF`. Setting a header like that from another origin needs a CORS preflight, and this service answers none, so the request is never sent. `SameSite=Strict` on the cookie is the first lock on the same door |
 | Credential theft from a sensor device | Sensor ingestion and relay control use separate keys, so a key recovered from firmware cannot switch relays |
 | Timing attacks on key comparison | Keys are compared with `secrets.compare_digest` |
@@ -34,7 +36,7 @@ project with no commercial support and no bug bounty.
 | A session outliving the account behind it | Resolving one re-reads the account, so disabling, demoting or deleting takes effect on the next request rather than at expiry |
 | A changed password leaving old logins alive | `pihome-hub-admin passwd` ends that account's sessions and reports how many |
 | Password recovery from a stolen database | Passwords are stored as salted `scrypt` hashes and never reversibly; `hub.db` is `0600` inside a `0700` state directory that `StateDirectoryMode=` sets |
-| Username enumeration through an account list | `pihome-hub-admin` is a local command, not a route. No HTTP endpoint reveals which accounts exist |
+| Username enumeration through an account list | Only an admin session can list accounts, at `GET /v1/users`. No key reaches it, and no session below `admin` |
 | A password on a command line | The admin tool refuses to take one as an argument — `ps` shows every argument to every account on the machine, and shell history keeps it |
 | Example credentials reaching production | Startup validation rejects keys shorter than 32 characters and keys that still look like the shipped example |
 | Secrets in the repository | Credentials live only in `.env`, which is git-ignored; no key, address or coordinate is present in source |
@@ -71,13 +73,12 @@ project with no commercial support and no bug bounty.
 - **The API key carries no role, and cannot be given one.** It is a single shared
   secret provisioned into firmware and into scripts, with no account behind it and
   nobody to hold one. A caller presenting it is admitted to every relay route exactly
-  as before, so a role only restricts somebody authenticated by a *session*. That
-  matters most where it is least visible: while
-  [pihome-hub-web](https://github.com/DGPRoman/pihome-hub-web) reaches the hub through
-  a proxy that attaches the key, a `viewer` using that client is authorised by the key
-  and not by their role. The half that closes this is the browser logging in for itself
-  and the proxy no longer injecting anything — pihome-hub-web#8 — after which the key
-  can be narrowed to the devices that still need it.
+  as before, so a role only restricts somebody authenticated by a *session*.
+  [pihome-hub-web](https://github.com/DGPRoman/pihome-hub-web) no longer needs it: the
+  browser logs in for itself and the dev proxy attaches nothing (pihome-hub-web#8), so
+  for a person using that client the role is what decides. That leaves the key free to
+  be narrowed to the devices that still need it, which has not been done yet. The
+  account routes do not accept it at all.
 - **Cross-site request forgery is defended by two things, neither of them a token.**
   `SameSite=Strict` keeps the cookie off any request another site initiated, including
   a top-level navigation; and a cookie-authenticated write must carry the
