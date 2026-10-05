@@ -168,11 +168,14 @@ service — the counters are in memory.
 | `401 {"detail":"Not authenticated"}` on `GET /v1/session` | No cookie, an expired one, one that was never issued, or an account disabled since login | Log in again. Session state is re-read per request, so a disabled account stops working at once |
 | Login returns `201` and every request after it is anonymous | `PIHOME_SESSION_COOKIE_SECURE=true` with no TLS in front. The browser accepts the cookie and then never sends it back over plain HTTP | Set it `false`, or put a TLS proxy in front |
 | `500` and `no such table: users` in the journal | The database exists but its schema was never applied | The service applies it at startup, so this means something else created the file. `systemctl restart pihome-hub` |
+| `401 {"detail":"The invitation is not valid. Ask whoever sent it for a new one"}` | The token was used already, is more than fifteen minutes old, was replaced by a newer one or revoked, or its account was disabled since | Issue another: `POST /v1/users/{username}/invitation`. A used one never works again, by design |
+| `403` presenting an invitation | No `X-Pihome-CSRF` header. The token was not looked at and still works | Send the header — any value |
+| A password does not open an account somebody joined by invitation | It has no password, by design | Invite them again, or give it one: `pihome-hub-admin passwd <name>` |
 | The web client logs in but the session does not stick | The client is not sending cookies — `fetch` omits them unless `credentials: 'include'` (or `'same-origin'` through a dev proxy) | Set it in the client |
 
-An account can be created only at a terminal on the Pi. An admin can change, disable or
-delete an `operator` or `viewer` account from a browser too, but not create one, and not
-touch an admin account at all.
+The first admin can be created only at a terminal on the Pi. After that an admin can add,
+invite, change, disable and delete `operator` and `viewer` accounts from a browser too —
+but not touch an admin account there at all.
 See the [`pihome-hub-admin` section above](#pihome-hub-admin-refuses) if that is failing.
 
 ## A sensor reads wrong

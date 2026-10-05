@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pihome_hub import __version__
-from pihome_hub.accounts import SessionStore, UnknownUserError, UserStore
+from pihome_hub.accounts import InvitationStore, SessionStore, UnknownUserError, UserStore
 from pihome_hub.api.system import router as system_router
 from pihome_hub.api.v1.automation import router as automation_router
 from pihome_hub.api.v1.devices import announce_router
@@ -326,6 +326,7 @@ def create_app(
     # prepare_database() before the server starts, so a state directory it cannot
     # write is reported there rather than at whichever request needed an account.
     app.state.users = UserStore(resolved.database_path)
+    app.state.invitations = InvitationStore(resolved.database_path)
     app.state.sessions = SessionStore(
         resolved.database_path,
         lifetime=timedelta(seconds=resolved.session_lifetime_seconds),

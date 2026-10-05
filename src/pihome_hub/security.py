@@ -350,7 +350,7 @@ def require_role(minimum: Role) -> Callable[[Request, str | None], None]:
         session = current_session(request)
         if session is not None:
             _require_rank(request, session, minimum)
-            _require_csrf_header(request, session)
+            require_csrf_header(request, session.user.username)
             return
         _authenticate(request, Scope.RELAY, x_api_key)
 
@@ -374,15 +374,19 @@ def _require_rank(request: Request, session: Session, minimum: Role) -> None:
         )
 
 
-def _require_csrf_header(request: Request, session: Session) -> None:
+def require_csrf_header(request: Request, username: str | None) -> None:
+    """Refuse a browser write that another page could have made.
+
+    For the cookie path, and for redeeming an invitation, which a browser does
+    before it has a cookie. Not for a key: a key is not an ambient credential, and a
+    browser will not attach one to a request some other page made, so there is
+    nothing there for a forged request to borrow.
+    """
     if request.method not in _SAFE_METHODS and CSRF_HEADER not in request.headers:
-        # Only the cookie path. A key is not an ambient credential: a browser will
-        # not attach it to a request some other page made, so there is nothing
-        # here for a forged request to borrow.
         logger.warning(
-            "cookie-authenticated write refused: no CSRF header",
+            "browser write refused: no CSRF header",
             extra={
-                "username": session.user.username,
+                "username": username,
                 "path": request.url.path,
                 "method": request.method,
             },
@@ -405,7 +409,7 @@ def require_admin_session(request: Request) -> Session:
     """
     session = require_session(request)
     _require_rank(request, session, Role.ADMIN)
-    _require_csrf_header(request, session)
+    require_csrf_header(request, session.user.username)
     return session
 
 

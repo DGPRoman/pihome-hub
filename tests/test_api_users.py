@@ -199,6 +199,7 @@ class TestListing:
             "role",
             "disabled",
             "created_at",
+            "invitation_expires_at",
         }
         assert "scrypt" not in response.text
 

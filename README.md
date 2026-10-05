@@ -132,10 +132,11 @@ process. Copy [`config/relays.example.yaml`](config/relays.example.yaml) to
 
 ## Accounts
 
-Accounts live in the SQLite file the unit's `StateDirectory=` decides, and are created
-with `pihome-hub-admin` at a terminal on the Pi — the first admin cannot be created through
-an API that requires an admin. Once there is one, it can manage the `operator` and `viewer`
-accounts from a browser as well; see [From a browser](#from-a-browser).
+Accounts live in the SQLite file the unit's `StateDirectory=` decides. The first admin is
+created with `pihome-hub-admin` at a terminal on the Pi — it cannot be created through an
+API that requires an admin. After that, an admin can add the `operator` and `viewer`
+accounts from a browser, and invite people to them without a password; see
+[From a browser](#from-a-browser).
 
 ```bash
 pihome-hub-admin create roman --role admin   # prompts for the password, twice
@@ -203,6 +204,30 @@ An admin session can list the accounts, move one between `operator` and `viewer`
 it, re-enable it, and delete it — the `/v1/users` routes in [the API table](#api). Changes
 take effect on that account's next request, as they do from the console.
 
+**Adding somebody is an invitation, not a password.** The admin names the account and
+picks its role, which makes an account with no password anybody holds, and then issues an
+invitation for it: a one-time token, valid for fifteen minutes, which a client shows as a
+link and a QR code. The person opens it and is logged in. A new phone, or a session that ran
+out, is another invitation to the same account, so an account made this way never needs a
+password at all. Issuing one replaces any the account already had, and the admin can revoke
+it.
+
+```console
+$ curl -b admin -X POST -H 'X-Pihome-CSRF: 1' -H 'Content-Type: application/json' \
+       -d '{"username":"olya","role":"operator"}' http://127.0.0.1:5002/v1/users
+$ curl -b admin -X POST -H 'X-Pihome-CSRF: 1' http://127.0.0.1:5002/v1/users/olya/invitation
+{"token":"…","expires_at":"2026-10-05T09:15:00Z"}
+
+$ curl -c olya -X POST -H 'X-Pihome-CSRF: 1' -H 'Content-Type: application/json' \
+       -d '{"invitation":"…"}' http://127.0.0.1:5002/v1/session
+{"username":"olya","role":"operator","expires_at":"2026-11-04T09:03:12Z"}
+```
+
+A client building the link puts the token after `#` — `/join#…` — which a browser never
+sends to a server, so it reaches no access log and no `Referer`. And opening the link must
+not redeem it: messaging apps fetch links to draw a preview, and the preview would spend the
+token before the person ever saw it. Redemption is a button on the page the link opens.
+
 Two limits, both deliberate. **These routes take an admin session and never a key.** The
 relay key opens every relay route and none of these: it lives in firmware and scripts, and
 none of them has any business deciding who may log in. **And admin accounts are the
@@ -221,12 +246,15 @@ replaying it does not produce the same result twice.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness. Unauthenticated |
-| `POST` | `/v1/session` | Log in — body `{"username": …, "password": …}`. Sets the session cookie |
+| `POST` | `/v1/session` | Log in — body `{"username": …, "password": …}`, or `{"invitation": …}` with `X-Pihome-CSRF`. Sets the session cookie |
 | `GET` | `/v1/session` | Who the cookie says you are. `401` if it says nothing usable |
 | `DELETE` | `/v1/session` | Log out. `204` either way |
 | `GET` | `/v1/users` | Every account, its role, and whether it is disabled — **admin session**, never a key |
 | `PATCH` | `/v1/users/{username}` | Change an `operator` or `viewer` account — body `{"role": "viewer"}`, `{"disabled": true}`, or both |
+| `POST` | `/v1/users` | Create an `operator` or `viewer` account with no password, to invite somebody to — body `{"username": …, "role": …}` |
 | `DELETE` | `/v1/users/{username}` | Delete an `operator` or `viewer` account. `204`; its sessions end with it |
+| `POST` | `/v1/users/{username}/invitation` | Issue a one-time token for the account, valid for fifteen minutes |
+| `DELETE` | `/v1/users/{username}/invitation` | Withdraw it. `204` either way |
 | `GET` | `/v1/relays` | Every relay and its state |
 | `PUT` | `/v1/relays` | Set every relay to the same state — body `{"on": true}` |
 | `POST` | `/v1/relays/toggle` | Invert every relay independently |
@@ -516,12 +544,10 @@ side; the browser logs in for itself on the other, and the dev proxy no longer a
 API key. That last part is what made the rest count: a key admits its holder to every
 route, so while one was attached a role restricted a session and not that client.
 
-Administration over HTTP is partly here. An admin can list, change, disable and delete
-`operator` and `viewer` accounts from a browser; creating one still takes the console, and
-inviting somebody to an account with a one-time link instead is
-[#74](https://github.com/DGPRoman/pihome-hub/issues/74). Admin accounts stay the console's
-either way, so a session taken over in a browser cannot hand out the authority to take the
-rest. Devices are declared in a file and `/v1/devices` only reads, which is
+Administration over HTTP is here for the accounts that need it. An admin can add `operator`
+and `viewer` accounts from a browser, invite people to them with a one-time link instead of
+a password, change, disable and delete them. Admin accounts stay the console's, so a session
+taken over in a browser cannot hand out the authority to take the rest. Devices are declared in a file and `/v1/devices` only reads, which is
 [on purpose](docs/devices.md): declaring rather than discovering is what stops an
 announcement aiming the hub at an address nobody chose.
 

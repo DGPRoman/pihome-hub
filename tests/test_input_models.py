@@ -25,6 +25,7 @@ _OUTPUT_ONLY: Final = {
     "DeviceSnapshot",
     "DeviceStatus",
     "HealthResponse",
+    "InvitationResponse",
     "RelayCollection",
     "RelayState",
     "SensorCollection",

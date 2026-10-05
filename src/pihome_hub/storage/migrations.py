@@ -80,6 +80,19 @@ MIGRATIONS: Final[tuple[str, ...]] = (
     ) WITHOUT ROWID;
     -- WITHOUT ROWID for the same reason as sessions: every lookup is by that key.
     """,
+    # 4 — one-time invitations to an account.
+    """
+    CREATE TABLE invitations (
+        -- The SHA-256 of the token, never the token, as for sessions.
+        token_hash TEXT    PRIMARY KEY,
+        -- Unique: an account has at most one invitation outstanding, so issuing
+        -- another replaces it and the link an admin was last shown is the only one
+        -- that works. Deleting the account takes its invitation with it.
+        user_id    INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT    NOT NULL,
+        expires_at TEXT    NOT NULL
+    ) WITHOUT ROWID;
+    """,
 )
 
 #: The schema this build understands.
