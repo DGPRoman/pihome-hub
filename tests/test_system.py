@@ -45,8 +45,12 @@ class TestRouting:
     def test_unknown_path_is_a_plain_404(self, client: TestClient) -> None:
         assert client.get("/does-not-exist").status_code == HTTPStatus.NOT_FOUND
 
-    def test_health_is_the_only_unversioned_route(
+    def test_only_health_and_the_android_app_are_unversioned(
         self, registered_routes: list[tuple[str, str]]
     ) -> None:
+        """Outside ``/v1`` is outside the guard, so this list is kept short on purpose.
+
+        The app is there because the phone downloading it has no session yet.
+        """
         unversioned = {path for _, path in registered_routes if not path.startswith("/v1")}
-        assert unversioned == {"/health"}
+        assert unversioned == {"/health", "/app/android.json", "/app/pihome.apk"}

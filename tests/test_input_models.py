@@ -20,6 +20,7 @@ import pihome_hub
 #: Models that only ever leave this process. Nothing external is parsed into them,
 #: so ``extra`` has nothing to guard: they are built from values already validated.
 _OUTPUT_ONLY: Final = {
+    "AndroidAppResponse",
     "AutomationRuleCollection",
     "DeviceCollection",
     "DeviceSnapshot",

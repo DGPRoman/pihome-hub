@@ -11,7 +11,7 @@ import ipaddress
 import pytest
 from pydantic import ValidationError
 
-from pihome_hub.config import MIN_API_KEY_LENGTH, resolve_database_path
+from pihome_hub.config import MIN_API_KEY_LENGTH, resolve_android_app_path, resolve_database_path
 from tests.conftest import VALID_KEY, build_settings
 
 
@@ -102,6 +102,24 @@ class TestTheDatabasePathHasOneAnswer:
         monkeypatch.setenv("STATE_DIRECTORY", "/var/lib/pihome-hub")
 
         assert resolve_database_path() == build_settings().database_path
+
+
+class TestTheAndroidAppPathHasOneAnswer:
+    """The same agreement, for where the admin tool installs the APK the hub serves."""
+
+    def test_it_matches_the_settings_default(self) -> None:
+        assert resolve_android_app_path() == build_settings().android_app_path
+
+    def test_it_matches_an_overridden_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PIHOME_ANDROID_APP_PATH", "/srv/somewhere/else/pihome.apk")
+
+        assert resolve_android_app_path() == build_settings().android_app_path
+
+    def test_it_sits_beside_the_database(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STATE_DIRECTORY", "/var/lib/pihome-hub")
+
+        assert resolve_android_app_path() == build_settings().android_app_path
+        assert build_settings().android_app_path.parent == build_settings().database_path.parent
 
 
 class TestSessionRenewalNetworks:

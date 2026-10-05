@@ -74,6 +74,16 @@ def resolve_database_path() -> Path:
     return Path(override) if override else _default_database_path()
 
 
+def _default_android_app_path() -> Path:
+    return _state_directory() / "pihome.apk"
+
+
+def resolve_android_app_path() -> Path:
+    """Where the Android app's APK is kept, for the admin tool, as the database is."""
+    override = os.environ.get("PIHOME_ANDROID_APP_PATH", "")
+    return Path(override) if override else _default_android_app_path()
+
+
 class Settings(BaseSettings):
     """Runtime configuration for the service."""
 
@@ -143,6 +153,11 @@ class Settings(BaseSettings):
     #: and nothing in hub.env can drift away from it. Off systemd it falls back to
     #: a path beside the checkout, which is what a development run wants.
     database_path: Path = Field(default_factory=_default_database_path)
+
+    #: The Android app's APK, offered to a phone joining by invitation, and put
+    #: there by ``pihome-hub-admin app install``. Beside the database for the same
+    #: reason; nothing is offered while there is no file.
+    android_app_path: Path = Field(default_factory=_default_android_app_path)
 
     #: How long a login lasts, counted from the moment it happened rather than from
     #: the last request. Sliding expiry would mean a database write per authenticated
