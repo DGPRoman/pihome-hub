@@ -15,8 +15,8 @@ from typing import Final, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
-from pihome_hub.accounts import Session, SessionStore, UserStore
-from pihome_hub.api.v1.schemas import LoginRequest, SessionResponse
+from pihome_hub.accounts import InvitationStore, Session, SessionStore, UserStore
+from pihome_hub.api.v1.schemas import InvitationLoginRequest, LoginRequest, SessionResponse
 from pihome_hub.config import Settings
 from pihome_hub.ratelimit import FailureLimiter
 from pihome_hub.security import (
@@ -24,6 +24,7 @@ from pihome_hub.security import (
     SessionRequired,
     guard_login_attempt,
     login_bucket,
+    require_csrf_header,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,43 +55,86 @@ def _describe(session: Session) -> SessionResponse:
     status_code=status.HTTP_201_CREATED,
     summary="Log in",
     responses={
-        401: {"description": "Wrong username or password, or the account is disabled"},
+        401: {
+            "description": "Wrong username or password, a disabled account, or an "
+            "invitation that opens nothing"
+        },
+        403: {"description": "An invitation presented without the CSRF header"},
         429: {"description": "Too many failed attempts from this client"},
     },
 )
-def log_in(request: Request, credentials: LoginRequest, response: Response) -> SessionResponse:
-    """Exchange a username and password for a session cookie.
+def log_in(
+    request: Request,
+    credentials: LoginRequest | InvitationLoginRequest,
+    response: Response,
+) -> SessionResponse:
+    """Exchange a username and password, or an invitation, for a session cookie.
 
     The only route under ``/v1`` that takes no credential of its own, which is what
     makes it the way in. It answers ``401`` to every kind of wrong — no such account,
     wrong password, account disabled — because which one it was is not the caller's
     to learn.
+
+    An invitation is the other way in, and the only one for an account made to be
+    joined that way. It is presented here rather than at a route of its own so that
+    the set of routes reachable without authentication does not grow. It must also
+    carry ``X-Pihome-CSRF``. A JSON body from another origin already needs a preflight
+    this service will not answer; the header makes that a stated rule rather than a
+    consequence of how bodies are parsed, which matters more here than for a
+    password, since a forged redemption would put a browser into an account of the
+    forger's choosing without the person noticing. Checked before the token is
+    looked at, so a refused attempt does not spend it. A password login is not asked
+    for the header: adding a required one to an existing route breaks every client
+    already written against it.
     """
     guard_login_attempt(request)
 
     settings: Settings = request.app.state.settings
-    users: UserStore = request.app.state.users
     sessions: SessionStore = request.app.state.sessions
     limiter: FailureLimiter = request.app.state.auth_limiter
     bucket = login_bucket(request)
 
-    user = users.authenticate(credentials.username, credentials.password)
-    if user is None:
-        limiter.record_failure(bucket)
-        logger.warning(
-            "login failed",
-            extra={
-                "client": bucket,
-                # The name that was offered, never the password. This goes to the
-                # journal, which an operator reads and a log shipper may forward.
-                "username": credentials.username,
-                "recent_failures": limiter.failure_count(bucket),
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-        )
+    if isinstance(credentials, InvitationLoginRequest):
+        require_csrf_header(request, None)
+        invitations: InvitationStore = request.app.state.invitations
+        user = invitations.redeem(credentials.invitation)
+        method = "invitation"
+        if user is None:
+            limiter.record_failure(bucket)
+            # Nothing that was presented is logged: the token is the credential.
+            logger.warning(
+                "login failed",
+                extra={
+                    "client": bucket,
+                    "method": method,
+                    "recent_failures": limiter.failure_count(bucket),
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="The invitation is not valid. Ask whoever sent it for a new one",
+            )
+    else:
+        users: UserStore = request.app.state.users
+        user = users.authenticate(credentials.username, credentials.password)
+        method = "password"
+        if user is None:
+            limiter.record_failure(bucket)
+            logger.warning(
+                "login failed",
+                extra={
+                    "client": bucket,
+                    "method": method,
+                    # The name that was offered, never the password. This goes to the
+                    # journal, which an operator reads and a log shipper may forward.
+                    "username": credentials.username,
+                    "recent_failures": limiter.failure_count(bucket),
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password",
+            )
 
     limiter.reset(bucket)
     token, session = sessions.create(user)
@@ -109,6 +153,7 @@ def log_in(request: Request, credentials: LoginRequest, response: Response) -> S
         extra={
             "username": user.username,
             "role": user.role.value,
+            "method": method,
             "expires_at": session.expires_at.isoformat(),
         },
     )

@@ -304,6 +304,56 @@ class TestSetPassword:
             store.set_password("nobody", PASSWORD)
 
 
+class TestCreateWithoutPassword:
+    """An account for an invitation: one that no password opens."""
+
+    @pytest.mark.parametrize("guess", ["", "!", PASSWORD, "x" * 64])
+    def test_no_password_opens_it_and_none_is_an_error(self, store: UserStore, guess: str) -> None:
+        """Including the empty string and the sentinel a careless version would have
+        stored. An exception here would surface as a 500 on the login route, which
+        tells anyone outside which accounts were made this way."""
+        store.create_without_password("olya", Role.OPERATOR)
+
+        assert store.authenticate("olya", guess) is None
+
+    def test_what_is_stored_is_an_ordinary_hash(self, store: UserStore, tmp_path: Path) -> None:
+        """Read back the way any other row is, and current, so a login does not
+        try to upgrade it either."""
+        store.create_without_password("olya", Role.OPERATOR)
+
+        assert needs_rehash(_stored_hash(tmp_path / "hub.db", "olya")) is False
+
+    def test_two_accounts_do_not_share_one(self, store: UserStore, tmp_path: Path) -> None:
+        store.create_without_password("olya", Role.OPERATOR)
+        store.create_without_password("anna", Role.VIEWER)
+
+        path = tmp_path / "hub.db"
+        assert _stored_hash(path, "olya") != _stored_hash(path, "anna")
+
+    def test_the_name_rules_still_apply(self, store: UserStore) -> None:
+        store.create_without_password("olya", Role.OPERATOR)
+
+        with pytest.raises(DuplicateUsernameError):
+            store.create_without_password("OLYA", Role.VIEWER)
+        with pytest.raises(InvalidUsernameError):
+            store.create_without_password("olya kovalenko", Role.VIEWER)
+
+    def test_a_password_set_later_works(self, store: UserStore) -> None:
+        """The console can still give such an account a password."""
+        store.create_without_password("olya", Role.OPERATOR)
+        store.set_password("olya", PASSWORD)
+
+        assert store.authenticate("olya", PASSWORD) is not None
+
+
+def _stored_hash(path: Path, username: str) -> str:
+    with connect(path) as connection:
+        row = connection.execute(
+            "SELECT password_hash FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    return str(row["password_hash"])
+
+
 class TestUpdate:
     """Role and disabled flag together, which is what PATCH /v1/users asks for."""
 

@@ -1,20 +1,11 @@
 """Login sessions: what a browser holds, and what the database keeps instead.
 
-The token is never stored. What is stored is its SHA-256, so a stolen database
-yields nothing replayable — the rows hold verifiers, not credentials. Lookup is by
-that hash, so the value compared is already public knowledge if the file is lost.
-
-SHA-256 rather than the scrypt the module next door uses for passwords, and the
-difference is what the input is. A password is chosen by a person, so it is
-guessable and hashing it has to be deliberately slow. A token is 256 bits out of
-``secrets``, so there is nothing to guess — and a slow hash would spend 16 MiB and
-a few hundred milliseconds on every authenticated request.
+The token is never stored, only its SHA-256 — see :mod:`pihome_hub.accounts.tokens`
+for why that hash and not a slow one.
 """
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -24,10 +15,8 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from pihome_hub.accounts.models import Role, User
+from pihome_hub.accounts.tokens import fingerprint, new_token, timestamp
 from pihome_hub.storage import connect, writing
-
-#: Bytes from ``secrets`` behind each token — 256 bits, which is not searchable.
-_TOKEN_BYTES: Final = 32
 
 #: How long a session lasts from the moment it is opened. Thirty days so a tablet on
 #: a kitchen wall is not asked again every week, and absolute rather than sliding:
@@ -74,7 +63,7 @@ class SessionStore:
         The token is handed back exactly once. Only its hash is kept, so a caller
         that loses it has to open a new session rather than look the old one up.
         """
-        token = secrets.token_urlsafe(_TOKEN_BYTES)
+        token = new_token()
         now = self._clock()
         expires_at = now + self._lifetime
 
@@ -86,7 +75,7 @@ class SessionStore:
             connection.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)",
-                (_fingerprint(token), user.id, _timestamp(now), _timestamp(expires_at)),
+                (fingerprint(token), user.id, timestamp(now), timestamp(expires_at)),
             )
 
         return token, Session(user=user, created_at=now, expires_at=expires_at)
@@ -105,7 +94,7 @@ class SessionStore:
                 " u.role, u.disabled, u.created_at AS user_created_at"
                 " FROM sessions s JOIN users u ON u.id = s.user_id"
                 " WHERE s.token_hash = ?",
-                (_fingerprint(token),),
+                (fingerprint(token),),
             ).fetchone()
 
         if row is None or row["disabled"]:
@@ -139,7 +128,7 @@ class SessionStore:
         """
         with writing(self._path) as connection:
             cursor = connection.execute(
-                "DELETE FROM sessions WHERE token_hash = ?", (_fingerprint(token),)
+                "DELETE FROM sessions WHERE token_hash = ?", (fingerprint(token),)
             )
             return cursor.rowcount > 0
 
@@ -156,7 +145,7 @@ class SessionStore:
 
     def count(self) -> int:
         """Live sessions, expired ones excluded whether or not they are still rows."""
-        now = _timestamp(self._clock())
+        now = timestamp(self._clock())
         with connect(self._path) as connection:
             row = connection.execute(
                 "SELECT count(*) FROM sessions WHERE expires_at > ?", (now,)
@@ -164,24 +153,6 @@ class SessionStore:
         return int(row[0])
 
 
-def _fingerprint(token: str) -> str:
-    """What goes in the table. Not reversible, and not useful if it leaks."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _timestamp(moment: datetime) -> str:
-    """How a time is written to a column that then gets compared.
-
-    Converted to UTC first, and that is the load-bearing part. SQLite compares these
-    as text, and text order matches time order only while every row carries the same
-    offset — within one it does, since a value with no fractional seconds sorts
-    before one with, and '.' is above '+' in exactly the direction the times run.
-    A clock handed in on a different offset would quietly break both the sweep and
-    the expiry check, so the conversion happens here rather than being assumed.
-    """
-    return moment.astimezone(UTC).isoformat()
-
-
 def _delete_expired(connection: sqlite3.Connection, now: datetime) -> int:
-    cursor = connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (_timestamp(now),))
+    cursor = connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (timestamp(now),))
     return cursor.rowcount

@@ -8,17 +8,37 @@ out — that needs the console on the hub, which is where the first admin came f
 
 It also means the last-admin rule in the account store is never reached from here.
 It is still there for the console, and still the last word if this ever changes.
+
+An account made here has no password anybody holds. The way in is an invitation: a
+one-time token, valid for fifteen minutes, which the admin passes on as a link or a
+code and which the person redeems at ``POST /v1/session``. A new phone, or a session
+that ran out, is another invitation to the same account.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Final
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from pihome_hub.accounts import Role, Session, User, UserStore
-from pihome_hub.api.v1.schemas import UserChangeRequest, UserCollection, UserResponse
+from pihome_hub.accounts import (
+    DuplicateUsernameError,
+    InvalidUsernameError,
+    InvitationStore,
+    Role,
+    Session,
+    User,
+    UserStore,
+)
+from pihome_hub.api.v1.schemas import (
+    InvitationResponse,
+    NewUserRequest,
+    UserChangeRequest,
+    UserCollection,
+    UserResponse,
+)
 from pihome_hub.security import AdminSessionRequired
 
 logger = logging.getLogger(__name__)
@@ -41,17 +61,27 @@ _CONSOLE_ONLY_DETAIL: Final = (
 )
 
 
+#: Why a disabled account is refused an invitation.
+_DISABLED_DETAIL: Final = "The account is disabled. Enable it before inviting anyone to it"
+
+
 def _users(request: Request) -> UserStore:
     users: UserStore = request.app.state.users
     return users
 
 
-def _describe(user: User) -> UserResponse:
+def _invitations(request: Request) -> InvitationStore:
+    invitations: InvitationStore = request.app.state.invitations
+    return invitations
+
+
+def _describe(user: User, invitation_expires_at: datetime | None) -> UserResponse:
     return UserResponse(
         username=user.username,
         role=user.role,
         disabled=user.disabled,
         created_at=user.created_at,
+        invitation_expires_at=invitation_expires_at,
     )
 
 
@@ -71,7 +101,39 @@ def _manageable(users: UserStore, username: str) -> User:
 
 @router.get("", summary="List every account")
 def list_users(request: Request) -> UserCollection:
-    return UserCollection(users=[_describe(user) for user in _users(request).list_users()])
+    pending = _invitations(request).pending()
+    return UserCollection(
+        users=[_describe(user, pending.get(user.id)) for user in _users(request).list_users()]
+    )
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an operator or viewer account to invite somebody to",
+    responses={
+        409: {"description": "The name is taken, ignoring case"},
+        422: {"description": "The name or the role is not one this hub accepts"},
+    },
+)
+def create_user(
+    request: Request, new: NewUserRequest, admin: Session = AdminSessionRequired
+) -> UserResponse:
+    """Make the account with no password anybody holds. Invite somebody to it next."""
+    try:
+        user = _users(request).create_without_password(new.username, new.role)
+    except InvalidUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except DuplicateUsernameError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    logger.info(
+        "account created",
+        extra={"username": user.username, "role": user.role.value, "by": admin.user.username},
+    )
+    return _describe(user, None)
 
 
 @router.patch(
@@ -93,6 +155,7 @@ def update_user(
     users = _users(request)
     target = _manageable(users, username)
     updated = users.update(target.username, role=change.role, disabled=change.disabled)
+    pending = _invitations(request).pending()
 
     logger.info(
         "account changed",
@@ -103,7 +166,7 @@ def update_user(
             "disabled": updated.disabled,
         },
     )
-    return _describe(updated)
+    return _describe(updated, pending.get(updated.id))
 
 
 @router.delete(
@@ -119,3 +182,54 @@ def delete_user(request: Request, username: str, admin: Session = AdminSessionRe
     users.delete(target.username)
 
     logger.info("account deleted", extra={"username": target.username, "by": admin.user.username})
+
+
+@router.post(
+    "/{username}/invitation",
+    status_code=status.HTTP_201_CREATED,
+    summary="Invite somebody to an operator or viewer account",
+    responses={
+        404: {"description": "No such account"},
+        409: {"description": "The account is disabled"},
+    },
+)
+def invite(
+    request: Request, username: str, admin: Session = AdminSessionRequired
+) -> InvitationResponse:
+    """Issue a one-time token for the account, replacing any it already had.
+
+    The token is in the body because it has to reach a person, and nowhere else: it
+    is not logged here or anywhere, and only its hash is kept.
+    """
+    target = _manageable(_users(request), username)
+    if target.disabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_DISABLED_DETAIL)
+
+    token, expires_at = _invitations(request).issue(target)
+
+    logger.info(
+        "invitation issued",
+        extra={
+            "username": target.username,
+            "by": admin.user.username,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+    return InvitationResponse(token=token, expires_at=expires_at)
+
+
+@router.delete(
+    "/{username}/invitation",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Withdraw an account's invitation",
+    responses={404: {"description": "No such account"}},
+)
+def revoke_invitation(
+    request: Request, username: str, admin: Session = AdminSessionRequired
+) -> None:
+    """Withdraw it. ``204`` whether or not there was one: either way there is none now."""
+    target = _manageable(_users(request), username)
+    if _invitations(request).revoke(target):
+        logger.info(
+            "invitation revoked", extra={"username": target.username, "by": admin.user.username}
+        )
