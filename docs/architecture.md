@@ -305,6 +305,13 @@ firmware and scripts, no account behind it, nobody to hold one. It carries no ro
 cannot be given one without inventing a user that nothing logs in to, so a valid relay key
 is admitted exactly as it always has been. SECURITY.md records what that costs.
 
+**The account routes are the exception, and they do not use `require_role`.** Their
+dependency, `require_admin_session`, takes a session and never reads the key, because
+admitting the relay key there would let firmware decide who may log in. They also stop
+short of the console: an admin account is not a target over HTTP and no account is raised
+to `admin`, so the last-admin guard below is never reached from a browser, and a session
+taken over there cannot make another admin or lock the real one out.
+
 The session is checked first, which is not merely an ordering. A logged-in caller then
 never reaches the failure limiter, so arriving without a header they do not need cannot
 spend an allowance that exists to slow down key guessing.

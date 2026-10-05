@@ -304,6 +304,54 @@ class TestSetPassword:
             store.set_password("nobody", PASSWORD)
 
 
+class TestUpdate:
+    """Role and disabled flag together, which is what PATCH /v1/users asks for."""
+
+    def test_both_change_in_one_call(self, store: UserStore) -> None:
+        store.create("anna", PASSWORD, Role.OPERATOR)
+
+        updated = store.update("anna", role=Role.VIEWER, disabled=True)
+
+        assert (updated.role, updated.disabled) == (Role.VIEWER, True)
+        assert store.get("anna") == updated
+
+    def test_a_field_left_out_is_left_alone(self, store: UserStore) -> None:
+        store.create("anna", PASSWORD, Role.OPERATOR)
+        store.set_disabled("anna", True)
+
+        updated = store.update("anna", role=Role.VIEWER)
+
+        assert updated.disabled
+
+    def test_a_failure_part_way_leaves_neither_change(
+        self, store: UserStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reason it is one method rather than a call to each setter."""
+        store.create("anna", PASSWORD, Role.OPERATOR)
+
+        def explode(*args: object, **kwargs: object) -> User:
+            raise RuntimeError("after both writes")
+
+        monkeypatch.setattr(store_module, "_reload", explode)
+
+        with pytest.raises(RuntimeError):
+            store.update("anna", role=Role.VIEWER, disabled=True)
+
+        assert (store.get("anna").role, store.get("anna").disabled) == (Role.OPERATOR, False)
+
+    def test_disabling_the_only_admin_is_refused_whatever_the_role_says(
+        self, store: UserStore
+    ) -> None:
+        """Naming ``admin`` as the role must not wave the disable through: the guard
+        has to look at the change as a whole, not at each field on its own."""
+        store.create("roman", PASSWORD, Role.ADMIN)
+
+        with pytest.raises(LastAdminError):
+            store.update("roman", role=Role.ADMIN, disabled=True)
+
+        assert not store.get("roman").disabled
+
+
 class TestATransactionIsAllOrNothing:
     def test_a_failure_after_a_write_leaves_nothing_behind(
         self, store: UserStore, monkeypatch: pytest.MonkeyPatch

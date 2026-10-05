@@ -154,22 +154,31 @@ class UserStore:
             )
 
     def set_role(self, username: str, role: Role) -> User:
-        with writing(self._path) as connection:
-            user = _require(connection, username)
-            if role is not Role.ADMIN:
-                _refuse_if_last_admin(connection, user)
-            connection.execute("UPDATE users SET role = ? WHERE id = ?", (role.value, user.id))
-            return _reload(connection, user.id)
+        return self.update(username, role=role)
 
     def set_disabled(self, username: str, disabled: bool) -> User:
         """Disable or re-enable an account, keeping its password and its history."""
+        return self.update(username, disabled=disabled)
+
+    def update(
+        self, username: str, *, role: Role | None = None, disabled: bool | None = None
+    ) -> User:
+        """Change the role, the disabled flag, or both, as one step.
+
+        One transaction rather than a call to each setter: a request that asks for
+        both would otherwise be half-applied by a failure between them, and the
+        last-admin count has to see the account as the whole change leaves it.
+        """
         with writing(self._path) as connection:
             user = _require(connection, username)
-            if disabled:
+            if (role is not None and role is not Role.ADMIN) or disabled:
                 _refuse_if_last_admin(connection, user)
-            connection.execute(
-                "UPDATE users SET disabled = ? WHERE id = ?", (int(disabled), user.id)
-            )
+            if role is not None:
+                connection.execute("UPDATE users SET role = ? WHERE id = ?", (role.value, user.id))
+            if disabled is not None:
+                connection.execute(
+                    "UPDATE users SET disabled = ? WHERE id = ?", (int(disabled), user.id)
+                )
             return _reload(connection, user.id)
 
     def delete(self, username: str) -> None:
