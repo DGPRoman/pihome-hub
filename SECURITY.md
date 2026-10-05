@@ -21,6 +21,13 @@ project with no commercial support and no bug bounty.
 | Unauthenticated relay control | Every `/v1` route requires an API key or a session; `/health` is the only unauthenticated endpoint and returns no build detail |
 | A read-only account switching a mains circuit | Every mutating `/v1` route requires `operator` or `admin`. A session below that is refused `403`, which is a different answer from `401` and a different thing for a client to do about it |
 | A key from firmware administering accounts | The account routes take an admin session and never read `X-API-Key`. The relay key, which opens every relay route, is a `401` on all of them |
+| An invitation link used twice, or by whoever it was forwarded to | Single use: redeeming deletes the row inside the write transaction, so two presentations at once cannot both succeed. Fifteen minutes, fixed, checked by the hub. Issuing another replaces it, and an admin can revoke it |
+| An invitation token in a log or a `Referer` | The hub never logs it and takes it only in a request body. A client building a link puts it after `#`, which a browser does not send to a server |
+| A link preview spending an invitation | Nothing a `GET` reaches redeems a token, so the fetch a messaging app makes to draw a preview cannot use it up. Redemption is a `POST`, which a client sends from a button on the page the link opens |
+| Another page logging a browser into an account of its choosing | Redeeming an invitation requires `X-Pihome-CSRF`, checked before the token is looked at, so a forged attempt is refused without spending it |
+| Invitation replay from a stolen database | Only the SHA-256 of each token is stored, as for sessions |
+| An invitation opening an admin account | None is issued for one, and redeeming re-reads the account and refuses it if it has become an admin since. An admin logs in with a password |
+| A password-less account told apart from outside | An account made for an invitation stores a real scrypt hash of a discarded random secret, so a password attempt on it is the same `401`, at the same cost, as on any other account |
 | A browser session taken over and used to entrench itself | Over HTTP an admin manages `operator` and `viewer` accounts only: no account is raised to `admin`, and an admin account is not changed, disabled or deleted. Making a second admin, or locking the real one out, takes the console on the Pi |
 | Cross-site request forgery against a logged-in browser | A cookie-authenticated write must carry `X-Pihome-CSRF`. Setting a header like that from another origin needs a CORS preflight, and this service answers none, so the request is never sent. `SameSite=Strict` on the cookie is the first lock on the same door |
 | Credential theft from a sensor device | Sensor ingestion and relay control use separate keys, so a key recovered from firmware cannot switch relays |
@@ -48,7 +55,10 @@ project with no commercial support and no bug bounty.
 
 - **No transport encryption.** The service speaks plain HTTP. The API key travels in a
   header, so anyone able to observe the connection can replay it. Do not expose it
-  directly to the internet.
+  directly to the internet. The same is true of a session cookie, and of an invitation
+  link — which is worth more to an observer than either, because it makes a new session
+  rather than borrowing one. Single use and fifteen minutes shrink that window; they do
+  not close it. Send invitation links over a channel you would trust with a password.
 - **Rate limiting slows guessing; it does not stop a determined attacker.** The counter
   is keyed on the peer address — collapsed to the `/64` for IPv6, since a routed
   allocation holds about 1.8×10¹⁹ addresses that would each otherwise earn a fresh

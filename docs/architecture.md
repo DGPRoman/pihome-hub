@@ -312,6 +312,17 @@ short of the console: an admin account is not a target over HTTP and no account 
 to `admin`, so the last-admin guard below is never reached from a browser, and a session
 taken over there cannot make another admin or lock the real one out.
 
+**An account made over HTTP has no password, and an invitation is the way in.** It stores
+a real scrypt hash of a random secret that is discarded at once, not an empty or sentinel
+value: `verify_password` refuses anything that is not a scrypt record as a corrupt row, so a
+sentinel would turn a password attempt on that name into a 500, and that would mark the
+account from outside. The invitation is a one-time token kept as its SHA-256, like a session.
+Redeeming finds the row and deletes it inside one immediate transaction, which is what makes
+it single use under concurrency, and re-reads the account at that moment, so one that was
+disabled or made an admin in the fifteen minutes since is refused. It is presented at
+`POST /v1/session` rather than at a route of its own, so the routes reachable without
+authentication are still the two that `tests/test_security.py` names.
+
 The session is checked first, which is not merely an ordering. A logged-in caller then
 never reaches the failure limiter, so arriving without a header they do not need cannot
 spend an allowance that exists to slow down key guessing.

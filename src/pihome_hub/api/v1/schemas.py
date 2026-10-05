@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from pihome_hub.accounts import MAX_PASSWORD_LENGTH, Role
 from pihome_hub.automation import AutomationRule
@@ -119,6 +120,21 @@ class SessionResponse(BaseModel):
     expires_at: datetime = Field(description="When the session stops being accepted")
 
 
+def _not_admin(role: Role) -> Role:
+    if role is Role.ADMIN:
+        msg = "admin is granted with pihome-hub-admin on the hub, not over HTTP"
+        raise ValueError(msg)
+    return role
+
+
+#: A role this API will hand out: ``operator`` or ``viewer``, never ``admin``.
+#:
+#: Lax for this one field, because strict mode accepts only an instance of the enum
+#: and a JSON body can only ever hold its value. Lax enum validation is still exact —
+#: ``'VIEWER'``, ``0`` and ``['viewer']`` are all refused — so nothing is guessed at.
+ManagedRole = Annotated[Role, Field(strict=False), AfterValidator(_not_admin)]
+
+
 class UserResponse(BaseModel):
     """One account, as an admin sees it.
 
@@ -133,6 +149,9 @@ class UserResponse(BaseModel):
     role: Role = Field(description="What this account may do")
     disabled: bool = Field(description="Whether the account is blocked from logging in")
     created_at: datetime = Field(description="When the account was created")
+    invitation_expires_at: datetime | None = Field(
+        description="When the account's outstanding invitation stops working, if it has one"
+    )
 
 
 class UserCollection(BaseModel):
@@ -141,6 +160,21 @@ class UserCollection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     users: list[UserResponse]
+
+
+class NewUserRequest(BaseModel):
+    """An account for somebody to join by invitation, at ``POST /v1/users``.
+
+    No password field. The account is made with none anybody holds, and the way in is
+    the invitation issued for it next.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    # A bound on the request, as for the login. The rule an account is held to is
+    # check_username's, which answers with its own reason.
+    username: str = Field(max_length=200, examples=["olya"])
+    role: ManagedRole = Field(description="`operator` or `viewer`")
 
 
 class UserChangeRequest(BaseModel):
@@ -152,25 +186,13 @@ class UserChangeRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    # Lax for this one field, because strict mode accepts only an instance of the
-    # enum and a JSON body can only ever hold its value. Lax enum validation is still
-    # exact — 'VIEWER', 0 and ['viewer'] are all refused — so nothing is guessed at.
-    role: Role | None = Field(
+    role: ManagedRole | None = Field(
         default=None,
-        strict=False,
         description="`operator` or `viewer`. `admin` is granted on the hub's console only",
     )
     disabled: bool | None = Field(
         default=None, description="Block the account from logging in, or let it in again"
     )
-
-    @field_validator("role")
-    @classmethod
-    def _not_admin(cls, role: Role | None) -> Role | None:
-        if role is Role.ADMIN:
-            msg = "admin is granted with pihome-hub-admin on the hub, not over HTTP"
-            raise ValueError(msg)
-        return role
 
     @model_validator(mode="after")
     def _names_something(self) -> UserChangeRequest:
@@ -178,3 +200,29 @@ class UserChangeRequest(BaseModel):
             msg = "name at least one of 'role' and 'disabled'"
             raise ValueError(msg)
         return self
+
+
+class InvitationResponse(BaseModel):
+    """A one-time token for an account, at ``POST /v1/users/{username}/invitation``.
+
+    The one place a credential is put in a response body, and the reason is that it
+    has to reach a person: the admin is shown it so that it can be passed on, as a
+    link or a code. It is returned once, only its hash is kept, and it opens the
+    account a single time within fifteen minutes.
+
+    A client building a link puts it after ``#``, which a browser never sends to the
+    server — so it reaches no access log and no ``Referer`` on the way back.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    token: str = Field(description="Present once at POST /v1/session as `invitation`")
+    expires_at: datetime = Field(description="When the token stops working")
+
+
+class InvitationLoginRequest(BaseModel):
+    """An invitation presented at ``POST /v1/session`` instead of a password."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    invitation: str = Field(max_length=200, description="The token the invitation carried")

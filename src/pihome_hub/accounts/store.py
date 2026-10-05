@@ -7,6 +7,7 @@ work in a threadpool and a SQLite connection is not safe across threads.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -125,7 +126,23 @@ class UserStore:
         # Hashed before the transaction, deliberately: it costs hundreds of
         # milliseconds on the target board, and holding SQLite's write lock for that
         # long would stall every other writer for no reason.
-        password_hash = hash_password(password)
+        return self._insert(username, hash_password(password), role)
+
+    def create_without_password(self, username: str, role: Role) -> User:
+        """Add an account nobody can log in to with a password — one for an invitation.
+
+        The column still holds a real scrypt hash, of 256 random bits discarded the
+        moment it is made, rather than an empty or sentinel value. ``verify_password``
+        refuses anything that is not a scrypt record as a corrupt row, so a sentinel
+        would answer a password attempt on this name with a 500 where every other
+        wrong credential gets a 401 — and that difference would tell anyone outside
+        which accounts were made this way. As it is, ``authenticate()`` treats the
+        account like any other and the password simply never matches.
+        """
+        check_username(username)
+        return self._insert(username, hash_password(secrets.token_urlsafe(32)), role)
+
+    def _insert(self, username: str, password_hash: str, role: Role) -> User:
         created_at = self._clock()
 
         with writing(self._path) as connection:
