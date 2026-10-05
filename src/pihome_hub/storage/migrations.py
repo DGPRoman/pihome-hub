@@ -93,6 +93,15 @@ MIGRATIONS: Final[tuple[str, ...]] = (
         expires_at TEXT    NOT NULL
     ) WITHOUT ROWID;
     """,
+    # 5 — when each session was last renewed, so renewal can wait a day in between.
+    """
+    -- The moment it was opened, until it is first renewed. Nullable only because
+    -- SQLite cannot add a NOT NULL column without a default and no constant is
+    -- right: the update below fills every existing row, and every session opened
+    -- from here on writes it.
+    ALTER TABLE sessions ADD COLUMN renewed_at TEXT;
+    UPDATE sessions SET renewed_at = created_at;
+    """,
 )
 
 #: The schema this build understands.

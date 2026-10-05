@@ -100,6 +100,7 @@ class ServerRun:
 
     called: bool = False
     app: object | None = None
+    options: dict[str, object] = field(default_factory=dict)
     claimed_while_serving: frozenset[int] = field(default_factory=frozenset)
     on_while_serving: bool | None = None
 
@@ -128,6 +129,7 @@ def _configure_to_start(
     def record(app: object, **kwargs: object) -> None:
         run.called = True
         run.app = app
+        run.options = kwargs
         # Sampled here rather than afterwards: this is the only instant at which the
         # service is supposed to be holding the pins, so it is the only way to tell
         # "released on the way out" from "never claimed".
@@ -204,6 +206,22 @@ class TestThePinsAreAlwaysReleased:
         assert run.on_while_serving is True, "initial_state was not applied"
         assert started_backend.claimed == frozenset(), "the pin was still claimed on the way out"
         assert started_backend.is_on(PORCH_PIN) is False, "shutdown_state was not applied"
+
+    def test_forwarded_for_is_believed_from_this_machine_only(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, started_backend: MockRelayBackend
+    ) -> None:
+        """The peer address buckets failed logins and decides whether a session renews.
+
+        uvicorn's own default would read FORWARDED_ALLOW_IPS from the environment, so
+        the trust is passed explicitly rather than inherited.
+        """
+        run = _configure_to_start(monkeypatch, tmp_path, started_backend)
+        monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
+
+        main()
+
+        assert run.options["proxy_headers"] is True
+        assert run.options["forwarded_allow_ips"] == "127.0.0.1"
 
     def test_an_unresolvable_rule_still_releases_the_pin(
         self,

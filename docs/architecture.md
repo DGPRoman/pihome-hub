@@ -263,11 +263,14 @@ cannot forge a motion event to reach a relay through a rule.
 | `sensor:<peer>` | Sharing one bucket would let a caller holding either key clear the other's failure count on every success, so a leaked sensor key would double as a rate-limit eraser |
 | `probe:<peer>` | For the pre-dependency check below, so buggy firmware cannot exhaust the allowance protecting the relay key |
 
-`<peer>` is the connection's own address, normalised: IPv6 collapses to its `/64`, because
-a routed prefix holds ~1.8e19 addresses and counting per address would hand out a fresh
-allowance per guess. IPv4 stays per address, since those are scarce and shared behind NAT.
-`X-Forwarded-For` is deliberately ignored — trusting it without knowing the proxy would
-let any caller forge its identity.
+`<peer>` is the address the request came from, normalised: IPv6 collapses to its `/64`,
+because a routed prefix holds ~1.8e19 addresses and counting per address would hand out a
+fresh allowance per guess. IPv4 stays per address, since those are scarce and shared behind
+NAT. `X-Forwarded-For` is believed only when the connection comes from loopback — a reverse
+proxy on the Pi itself — and ignored from anywhere else, where trusting it would let any
+caller forge its identity. `__main__` passes uvicorn that rule rather than inheriting its
+default, which an environment variable could widen. The same address, before it is
+normalised, decides whether reading a session may renew it.
 
 One wrinkle worth knowing about. FastAPI parses a request body **before** solving
 dependencies, so a body that is not valid JSON raises before authentication ever runs.
@@ -363,13 +366,20 @@ purpose. A token is 256 bits out of `secrets`, so there is nothing to guess — 
 slow hash would spend 16 MiB and a few hundred milliseconds on *every* authenticated
 request rather than once per login.
 
-**Expiry is absolute, not sliding.** A session ends 30 days after it was opened,
-however recently it was used. Sliding expiry is friendlier, and it costs a database
-write on every authenticated request; on a card with finite write cycles that is the
-wrong trade for saving someone one login a month. Nothing on the read path writes,
-and a test asserts that by refusing the write transaction rather than by watching the
-file — in WAL mode a write lands in `hub.db-wal` and the database's own mtime does
-not move, so watching it would pass with a write added.
+**Expiry is fixed, and renewed at most once a day from home.** A session ends 30 days
+after it was opened or last renewed. Sliding expiry on every request would be friendlier
+still, and it costs a database write on every authenticated request; on a card with
+finite write cycles that is the wrong trade. But an account joined by invitation has no
+password, so without renewal a phone would need a new invitation every month. The middle
+way is one read: `GET /v1/session`, which a client makes when it starts and when it comes
+back to the foreground, renews the session to a full lifetime when the request comes from
+`PIHOME_SESSION_RENEWAL_NETWORKS` and the last renewal was a day or more ago. That is one
+write per device per day. The token stays the same, so a client has nothing to replace,
+and `sessions.renewed_at` keeps the day honest across restarts.
+
+Nothing else on the read path writes, and tests assert that by refusing the write
+transaction rather than by watching the file — in WAL mode a write lands in `hub.db-wal`
+and the database's own mtime does not move, so watching it would pass with a write added.
 
 Expired rows are swept when a session is opened. That is already a write, it is rare,
 and it bounds the table without a timer that some component has to own.
@@ -461,5 +471,6 @@ looking in the wrong place.
 - **No history.** Trends need retention and a pruning story on a card with finite write
   cycles; that does not earn its place for switching yard lights.
 - **No pin read-back.** See "Reading relay state" above.
-- **No `X-Forwarded-For`, no TLS, no LAN bind by default.** Reaching the service from
+- **No TLS, no LAN bind by default, and `X-Forwarded-For` only from a proxy on the Pi
+  itself.** Reaching the service from
   elsewhere is a VPN or a reverse proxy's job — see [SECURITY.md](../SECURITY.md).

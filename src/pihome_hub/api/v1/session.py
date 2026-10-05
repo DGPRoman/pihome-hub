@@ -1,7 +1,8 @@
 """Logging in and out.
 
 Three routes on one path, which is what the resource is: ``POST`` opens a session,
-``GET`` reports the one you have, ``DELETE`` ends it.
+``GET`` reports the one you have — and renews it, from the home network — and
+``DELETE`` ends it.
 
 The token goes into an HttpOnly cookie and into no response body. A browser holding
 it cannot read it from JavaScript, so a cross-site scripting bug somewhere in the
@@ -22,6 +23,7 @@ from pihome_hub.ratelimit import FailureLimiter
 from pihome_hub.security import (
     SESSION_COOKIE,
     SessionRequired,
+    comes_from,
     guard_login_attempt,
     login_bucket,
     require_csrf_header,
@@ -40,6 +42,23 @@ _COOKIE_PATH: Final = "/"
 #: initiated. Strict is the whole of the cross-site request forgery defence here —
 #: see SECURITY.md for what that does and does not cover.
 _COOKIE_SAMESITE: Final[Literal["strict"]] = "strict"
+
+
+def _set_session_cookie(response: Response, token: str, settings: Settings) -> None:
+    """Hand the browser its token, for a lifetime from now.
+
+    Shared by logging in and renewing, so the two cannot come to disagree about any
+    attribute — a cookie set with different ones is a second cookie, not an update.
+    """
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=settings.session_lifetime_seconds,
+        path=_COOKIE_PATH,
+        httponly=True,
+        samesite=_COOKIE_SAMESITE,
+        secure=settings.session_cookie_secure,
+    )
 
 
 def _describe(session: Session) -> SessionResponse:
@@ -139,15 +158,7 @@ def log_in(
     limiter.reset(bucket)
     token, session = sessions.create(user)
 
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=settings.session_lifetime_seconds,
-        path=_COOKIE_PATH,
-        httponly=True,
-        samesite=_COOKIE_SAMESITE,
-        secure=settings.session_cookie_secure,
-    )
+    _set_session_cookie(response, token, settings)
     logger.info(
         "logged in",
         extra={
@@ -165,14 +176,43 @@ def log_in(
     summary="Report the current session",
     responses={401: {"description": "No usable session"}},
 )
-def read_session(session: Session = SessionRequired) -> SessionResponse:
+def read_session(
+    request: Request,
+    response: Response,
+    session: Session = SessionRequired,
+) -> SessionResponse:
     """Who the caller is, according to the cookie they sent.
 
-    What a web client calls on load to decide between the dashboard and the login
-    form, and the reason it answers from the database rather than from the cookie:
-    an account disabled since login is reported as no session at all.
+    What a client calls when it starts and when it comes back to the foreground, to
+    decide between the house and the way in — and the reason it answers from the
+    database rather than from the cookie: an account disabled since login is reported
+    as no session at all.
+
+    It is also where a session is renewed, so that a phone opened every day stays
+    signed in without an admin issuing a new invitation each month. Only from the
+    home network, so a token copied off a device cannot be kept alive from anywhere
+    else; and at most once a day, so this costs a write per device per day rather
+    than one per request. Otherwise this writes nothing, as it did before renewal.
     """
-    return _describe(session)
+    settings: Settings = request.app.state.settings
+    if not comes_from(request, settings.session_renewal_networks):
+        return _describe(session)
+
+    sessions: SessionStore = request.app.state.sessions
+    # Present: SessionRequired has just resolved a session from it.
+    token = request.cookies[SESSION_COOKIE]
+    renewed = sessions.renew(token)
+    if renewed is None or renewed.renewed_at == session.renewed_at:
+        # Renewed within the last day, or ended between the two reads. Either way
+        # the session already resolved is the answer, and there is nothing to send.
+        return _describe(session)
+
+    _set_session_cookie(response, token, settings)
+    logger.info(
+        "session renewed",
+        extra={"username": renewed.user.username, "expires_at": renewed.expires_at.isoformat()},
+    )
+    return _describe(renewed)
 
 
 @router.delete(

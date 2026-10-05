@@ -121,8 +121,9 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_DEVICE_POLL_SECONDS` | `30.0` | How often each announced device is asked for its status |
 | `PIHOME_DEVICE_POLL_TIMEOUT_SECONDS` | `5.0` | How long one device has to answer before it is recorded unreachable |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
-| `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days), from when it happened rather than from the last request |
+| `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days) from when it was opened or last renewed — see [Accounts](#accounts) |
 | `PIHOME_SESSION_COOKIE_SECURE` | `false` | `Secure` on the session cookie. Only true behind a TLS proxy — over plain HTTP the browser would never send it |
+| `PIHOME_SESSION_RENEWAL_NETWORKS` | private IPv4 ranges and `fc00::/7` | Where reading a session may renew it, as a JSON list of CIDR blocks, e.g. `["192.168.1.0/24"]`. Loopback and VPN ranges are not in the default; `[]` turns renewal off |
 | `PIHOME_AUTH_MAX_FAILURES` | `10` | Failed auth attempts per client before 429 |
 | `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` | `300` | Window those failures are counted over |
 
@@ -176,7 +177,9 @@ demote the last enabled admin — none of the three is undoable through any inte
 service offers, and the fix would be editing SQLite by hand over SSH.
 
 Sessions last 30 days from the moment of login rather than from the last request, which
-keeps the read path free of database writes — a Pi runs on an SD card. Disabling, demoting
+keeps the read path free of database writes — a Pi runs on an SD card. The one exception is
+renewal, at most once a day and only from the home network; see
+[From a browser](#from-a-browser). Disabling, demoting
 or deleting an account takes effect on its next request, because resolving a session
 re-reads the account rather than trusting what was true when it was opened. A password
 change is the one that has to be said out loud, which is why `passwd` ends the sessions
@@ -211,6 +214,16 @@ link and a QR code. The person opens it and is logged in. A new phone, or a sess
 out, is another invitation to the same account, so an account made this way never needs a
 password at all. Issuing one replaces any the account already had, and the admin can revoke
 it.
+
+**A session in use at home does not run out.** Reading the session — `GET /v1/session`,
+which a client does when it starts and when it comes back to the foreground, as the web
+client does — renews it to a full lifetime again, when two things hold: the request
+comes from the home network, `PIHOME_SESSION_RENEWAL_NETWORKS`, and the session has not been
+renewed in the last day. So a phone opened every day stays signed in for as long as it is
+used, and costs the SD card one write a day rather than one per request. A token copied off
+it cannot be kept alive from anywhere else; it ends a lifetime after it was last renewed at
+home. To cut a lost phone off for good, delete the account and invite the person again:
+disabling an account only suspends its sessions, and enabling it brings them back.
 
 ```console
 $ curl -b admin -X POST -H 'X-Pihome-CSRF: 1' -H 'Content-Type: application/json' \

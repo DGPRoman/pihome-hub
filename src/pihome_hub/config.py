@@ -26,6 +26,11 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 #: brute force even when the service is reachable over an untrusted network.
 MIN_API_KEY_LENGTH: Final = 32
 
+#: The networks a home is on, as far as a default can know: the private IPv4 ranges
+#: and IPv6 unique local addresses. Loopback is not among them, nor is 100.64.0.0/10,
+#: the shared range VPNs such as Tailscale hand out.
+_HOME_NETWORKS: Final = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+
 #: Values that look like a key but are really a copy-paste artefact from example
 #: config. Rejecting them at startup turns a silent security hole into a crash.
 _REJECTED_KEY_MARKERS: Final = (
@@ -152,6 +157,14 @@ class Settings(BaseSettings):
     #: request after it would be anonymous. Set it true behind a TLS proxy, which is
     #: the only arrangement where it is both correct and possible.
     session_cookie_secure: bool = False
+
+    #: Where a request has to come from for reading the session to renew it, as CIDR
+    #: blocks — the home network, so a token copied off a phone cannot be kept alive
+    #: from anywhere else. Add a VPN's range to renew over it too. An empty list turns
+    #: renewal off, and every session then ends a lifetime after it was opened.
+    session_renewal_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = Field(
+        default_factory=lambda: [ipaddress.ip_network(network) for network in _HOME_NETWORKS]
+    )
 
     # -- Brute-force protection ----------------------------------------------
     #: Failed authentication attempts one client may make inside the window

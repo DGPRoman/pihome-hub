@@ -101,6 +101,33 @@ class TestTheMigrationListIsAppendOnly:
         assert len(MIGRATIONS) == LATEST_VERSION
 
 
+class TestSessionsFromBeforeRenewal:
+    def test_a_session_opened_before_counts_as_renewed_when_it_was_opened(
+        self, tmp_path: Path
+    ) -> None:
+        """A live session survives the upgrade, and waits its day like any other."""
+        with connect(tmp_path / "hub.db") as connection:
+            for index in range(4):
+                with connection:
+                    connection.executescript(MIGRATIONS[index])
+                    connection.execute(f"PRAGMA user_version = {index + 1}")
+            connection.execute(
+                "INSERT INTO users (id, username, password_hash, role, created_at)"
+                " VALUES (1, 'roman', 'hash', 'admin', '2026-01-01T00:00:00Z')"
+            )
+            connection.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at)"
+                " VALUES ('abc', 1, '2026-01-05T00:00:00Z', '2026-02-04T00:00:00Z')"
+            )
+
+            migrate(connection)
+
+            renewed_at = connection.execute(
+                "SELECT renewed_at FROM sessions WHERE token_hash = 'abc'"
+            ).fetchone()[0]
+        assert renewed_at == "2026-01-05T00:00:00Z"
+
+
 class TestTheSessionsTable:
     @pytest.fixture
     def connection(self, tmp_path: Path) -> Iterator[sqlite3.Connection]:

@@ -16,8 +16,9 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from enum import StrEnum
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from typing import Annotated, Final
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -86,14 +87,43 @@ def normalise_client(host: str) -> str:
 def client_key(request: Request) -> str:
     """Identify the peer for rate-limiting purposes.
 
-    Derived from the address that opened the connection. No ``X-Forwarded-For``
-    handling: trusting that header without knowing which proxy sits in front would let
-    any caller forge its own identity and sidestep the limiter entirely. Behind a
-    reverse proxy, rate limiting belongs in the proxy — see SECURITY.md.
+    Derived from the address that opened the connection — unless that is this
+    machine's own loopback, when it is the address a reverse proxy on the Pi passed in
+    ``X-Forwarded-For``. ``__main__`` tells uvicorn to trust the header from loopback
+    and nowhere else: from anywhere else it would let any caller forge its own
+    identity and sidestep the limiter entirely. See SECURITY.md.
     """
     if request.client is None:
         return _UNKNOWN_CLIENT
     return normalise_client(request.client.host)
+
+
+def client_address(request: Request) -> IPv4Address | IPv6Address | None:
+    """The peer :func:`client_key` identifies, as an address, before it is reduced.
+
+    ``None`` when there is no IP to judge — a Unix socket, or a test client's label.
+    An IPv4 address carried in IPv6 (``::ffff:192.0.2.1``) is the IPv4 address it is,
+    so a dual-stack listener does not hide a home network behind the mapping.
+    """
+    if request.client is None:
+        return None
+    try:
+        address = ipaddress.ip_address(request.client.host)
+    except ValueError:
+        return None
+    if isinstance(address, IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def comes_from(request: Request, networks: Iterable[IPv4Network | IPv6Network]) -> bool:
+    """Whether the request's peer is inside any of ``networks``.
+
+    An address outside them, and a peer with no address at all, are both ``False``:
+    this answers a question about trust, and not knowing is not a yes.
+    """
+    address = client_address(request)
+    return address is not None and any(address in network for network in networks)
 
 
 def _expected_key(settings: Settings, scope: Scope) -> str | None:

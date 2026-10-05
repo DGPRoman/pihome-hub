@@ -10,6 +10,7 @@ import pytest
 
 from pihome_hub.accounts import Role, Session, SessionStore, User, UserStore
 from pihome_hub.accounts import sessions as sessions_module
+from pihome_hub.accounts.sessions import RENEWAL_INTERVAL
 from pihome_hub.storage import connect, prepare_database
 
 PASSWORD = "correct-horse-battery"
@@ -91,6 +92,7 @@ class TestCreate:
 
         assert session.created_at == START
         assert session.expires_at == START + LIFETIME
+        assert session.renewed_at == START
 
     def test_the_token_itself_is_not_stored(
         self, sessions: SessionStore, roman: User, database: Path
@@ -180,6 +182,95 @@ class TestResolve:
         monkeypatch.setattr(sessions_module, "writing", refuse)
 
         assert sessions.resolve(token) is not None
+
+
+class TestRenew:
+    def test_a_session_a_day_old_lasts_a_lifetime_from_now(
+        self, sessions: SessionStore, clock: Clock, roman: User
+    ) -> None:
+        token, _ = sessions.create(roman)
+        clock.advance(RENEWAL_INTERVAL)
+
+        renewed = sessions.renew(token)
+
+        assert renewed is not None
+        assert renewed.renewed_at == clock.now
+        assert renewed.expires_at == clock.now + LIFETIME
+        assert renewed.created_at == START, "renewing is not opening a new session"
+        assert sessions.resolve(token) == renewed, "the renewal is stored, not only returned"
+
+    def test_within_a_day_it_comes_back_unchanged_and_writes_nothing(
+        self, sessions: SessionStore, clock: Clock, roman: User, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Called on every read of the session, so this is the case that runs most."""
+        token, opened = sessions.create(roman)
+        clock.advance(RENEWAL_INTERVAL - timedelta(seconds=1))
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise AssertionError("renew() opened a write transaction")
+
+        monkeypatch.setattr(sessions_module, "writing", refuse)
+
+        assert sessions.renew(token) == opened
+
+    def test_the_day_counts_from_the_last_renewal_not_from_the_login(
+        self, sessions: SessionStore, clock: Clock, roman: User
+    ) -> None:
+        token, _ = sessions.create(roman)
+        clock.advance(RENEWAL_INTERVAL)
+        first = sessions.renew(token)
+        clock.advance(RENEWAL_INTERVAL / 2)
+
+        assert sessions.renew(token) == first
+
+        clock.advance(RENEWAL_INTERVAL / 2)
+        second = sessions.renew(token)
+        assert second is not None
+        assert second.renewed_at == clock.now
+
+    def test_a_session_renewed_daily_outlives_its_lifetime(
+        self, sessions: SessionStore, clock: Clock, roman: User
+    ) -> None:
+        """What renewal is for: a phone opened every day is never sent back to an admin."""
+        token, _ = sessions.create(roman)
+
+        for _ in range(45):
+            clock.advance(RENEWAL_INTERVAL)
+            assert sessions.renew(token) is not None
+
+        assert clock.now - START > LIFETIME
+        assert sessions.resolve(token) is not None
+
+    def test_an_expired_session_is_not_brought_back(
+        self, sessions: SessionStore, clock: Clock, roman: User
+    ) -> None:
+        token, _ = sessions.create(roman)
+        clock.advance(LIFETIME)
+
+        assert sessions.renew(token) is None
+        assert sessions.resolve(token) is None
+
+    def test_a_disabled_account_is_not_renewed_while_disabled(
+        self, sessions: SessionStore, users: UserStore, clock: Clock, roman: User
+    ) -> None:
+        users.create("spare", PASSWORD, Role.ADMIN)
+        token, opened = sessions.create(roman)
+        users.set_disabled("roman", True)
+        clock.advance(RENEWAL_INTERVAL)
+
+        assert sessions.renew(token) is None
+
+        users.set_disabled("roman", False)
+        resolved = sessions.resolve(token)
+        assert resolved is not None
+        assert resolved.expires_at == opened.expires_at, "it was extended while disabled"
+
+    def test_a_token_that_was_never_issued_renews_nothing(
+        self, sessions: SessionStore, roman: User
+    ) -> None:
+        sessions.create(roman)
+
+        assert sessions.renew("not-a-token-anybody-ever-had") is None
 
 
 class TestDestroy:

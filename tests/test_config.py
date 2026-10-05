@@ -6,6 +6,8 @@ default bind address or turns the docs on by default, the suite should object.
 
 from __future__ import annotations
 
+import ipaddress
+
 import pytest
 from pydantic import ValidationError
 
@@ -100,3 +102,44 @@ class TestTheDatabasePathHasOneAnswer:
         monkeypatch.setenv("STATE_DIRECTORY", "/var/lib/pihome-hub")
 
         assert resolve_database_path() == build_settings().database_path
+
+
+class TestSessionRenewalNetworks:
+    """Where a session may be renewed from. A default that let a public address in
+    would turn a copied token into one its holder can keep alive from anywhere."""
+
+    def test_the_private_ranges_are_home_by_default(self) -> None:
+        networks = build_settings().session_renewal_networks
+
+        for inside in ("10.1.2.3", "172.20.0.5", "192.168.1.20", "fd12:3456::1"):
+            assert any(ipaddress.ip_address(inside) in network for network in networks), inside
+
+    def test_loopback_a_vpn_range_and_the_internet_are_not(self) -> None:
+        networks = build_settings().session_renewal_networks
+
+        for outside in ("127.0.0.1", "::1", "100.100.1.2", "203.0.113.9", "2001:db8::1"):
+            assert not any(ipaddress.ip_address(outside) in network for network in networks), (
+                outside
+            )
+
+    def test_it_reads_a_json_list_from_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PIHOME_SESSION_RENEWAL_NETWORKS", '["192.168.1.0/24", "fd00::/8"]')
+
+        networks = build_settings().session_renewal_networks
+
+        assert networks == [
+            ipaddress.ip_network("192.168.1.0/24"),
+            ipaddress.ip_network("fd00::/8"),
+        ]
+
+    def test_an_empty_list_is_allowed_and_turns_renewal_off(self) -> None:
+        assert build_settings(session_renewal_networks=[]).session_renewal_networks == []
+
+    @pytest.mark.parametrize("entry", ["192.168.1.0/33", "home", "192.168.1.5/24"])
+    def test_an_entry_that_is_not_a_network_is_a_configuration_error(self, entry: str) -> None:
+        """Including a host address with a prefix: the operator meant a network, and
+        guessing which one is how a typo widens what counts as home."""
+        with pytest.raises(ValidationError, match="session_renewal_networks"):
+            build_settings(session_renewal_networks=[entry])
