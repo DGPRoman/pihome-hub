@@ -121,6 +121,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 | `PIHOME_DEVICE_POLL_SECONDS` | `30.0` | How often each announced device is asked for its status |
 | `PIHOME_DEVICE_POLL_TIMEOUT_SECONDS` | `5.0` | How long one device has to answer before it is recorded unreachable |
 | `PIHOME_DATABASE_PATH` | `$STATE_DIRECTORY/hub.db` | Accounts. Follows the unit's `StateDirectory=`; falls back to `var/hub.db` off systemd |
+| `PIHOME_ANDROID_APP_PATH` | `$STATE_DIRECTORY/pihome.apk` | The Android app offered to phones joining by invitation — see [The Android app](#the-android-app) |
 | `PIHOME_SESSION_LIFETIME_SECONDS` | `2592000` | How long a login lasts (30 days) from when it was opened or last renewed — see [Accounts](#accounts) |
 | `PIHOME_SESSION_COOKIE_SECURE` | `false` | `Secure` on the session cookie. Only true behind a TLS proxy — over plain HTTP the browser would never send it |
 | `PIHOME_SESSION_RENEWAL_NETWORKS` | private IPv4 ranges and `fc00::/7` | Where reading a session may renew it, as a JSON list of CIDR blocks, e.g. `["192.168.1.0/24"]`. Loopback and VPN ranges are not in the default; `[]` turns renewal off |
@@ -249,6 +250,28 @@ disabled or deleted. A session taken over in a browser therefore cannot make a s
 or lock the real one out — that needs a terminal on the Pi, which is where the first admin
 came from.
 
+### The Android app
+
+[`pihome-android`](https://github.com/DGPRoman/pihome-android) is the phone's client. A
+person given an invitation scans its QR code with the phone's camera, which opens the join
+page above; on Android that page hands the invitation to the app, or, when the app is not
+installed yet, offers it for download from this hub. No store and no internet are involved.
+
+The hub offers whichever APK the operator installed, and nothing until one is:
+
+```bash
+sudo -u pihome pihome-hub-admin app install pihome-0.2.0.apk   # checks it is an APK, prints its SHA-256
+sudo -u pihome pihome-hub-admin app show
+sudo -u pihome pihome-hub-admin app remove                     # the join page stops offering it
+```
+
+It is kept beside the database, at `PIHOME_ANDROID_APP_PATH`, and replaced in one rename, so
+a phone downloading at that moment gets the old file or the new one. `/app/pihome.apk` serves
+it and `/app/android.json` describes it, both without a session, since the phone has none
+yet. A first install over plain `http://` trusts the home network the way the web client
+does; the checksum is there to compare against the release. After that Android itself
+refuses an update signed by anyone else.
+
 ## API
 
 Everything under `/v1` requires an `X-API-Key` header or a session cookie, except the login
@@ -259,6 +282,8 @@ replaying it does not produce the same result twice.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness. Unauthenticated |
+| `GET` | `/app/android.json` | The SHA-256 and size of the Android app this hub offers. Unauthenticated; `404` while it offers none |
+| `GET` | `/app/pihome.apk` | Download the Android app. Unauthenticated; `404` while it offers none |
 | `POST` | `/v1/session` | Log in — body `{"username": …, "password": …}`, or `{"invitation": …}` with `X-Pihome-CSRF`. Sets the session cookie |
 | `GET` | `/v1/session` | Who the cookie says you are. `401` if it says nothing usable |
 | `DELETE` | `/v1/session` | Log out. `204` either way |
@@ -511,7 +536,8 @@ open port.
 ```
 src/pihome_hub/
 ├── __main__.py        entry point the systemd unit runs
-├── admin.py           pihome-hub-admin — account management at a terminal
+├── admin.py           pihome-hub-admin — accounts, and the Android app, at a terminal
+├── android.py         the Android app's APK: checked, installed, described
 ├── app.py             ASGI application factory
 ├── config.py          settings and validation
 ├── security.py        API-key authentication, three scopes
@@ -520,6 +546,7 @@ src/pihome_hub/
 ├── logging.py         stdout logging, text or JSON
 ├── api/
 │   ├── system.py      /health — unversioned, unauthenticated
+│   ├── android.py     /app — the Android app, for a phone joining without a session
 │   └── v1/            relay, sensor, automation and device routes (authenticated)
 ├── relays/
 │   ├── backend.py     RelayBackend protocol — the hardware seam
