@@ -61,7 +61,7 @@ class RelayConfig(BaseModel):
     @field_validator("id")
     @classmethod
     def _id_is_a_slug(cls, value: str) -> str:
-        if not _ID_PATTERN.match(value):
+        if not _ID_PATTERN.fullmatch(value):
             msg = (
                 f"id {value!r} must be lowercase letters, digits and single hyphens, "
                 "e.g. 'porch-light'"

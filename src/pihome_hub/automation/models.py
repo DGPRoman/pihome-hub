@@ -83,7 +83,7 @@ class AutomationRule(BaseModel):
 
     @model_validator(mode="after")
     def _id_is_a_slug(self) -> Self:
-        if not _ID_PATTERN.match(self.id):
+        if not _ID_PATTERN.fullmatch(self.id):
             msg = (
                 f"id {self.id!r} must be lowercase letters, digits and single hyphens, "
                 "e.g. 'porch-motion-light'"
