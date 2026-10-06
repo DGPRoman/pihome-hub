@@ -107,6 +107,7 @@ ls /dev/gpiochip*                                  # gpiochip0 is what the unit 
 | Symptom | Cause |
 | --- | --- |
 | `could not claim pin 17 for relay 'porch-light': …` at startup | The pin is held by something else, the service user is not in `gpio`, or the extra is missing. The message names all three |
+| `xCreatePipe: Can't set permissions` and `Falling back from lgpio` just before it | lgpio has nowhere to write. The unit gives it `/run/pihome-hub` through `LG_WD`; a unit from before that, or a copy edited without it, leaves lgpio in the read-only checkout. Re-run `deploy/install.sh` |
 | The unit starts on a Pi 5 but no pin responds | The unit's `DeviceAllow=/dev/gpiochip0` is hard-coded, and a Pi 5 numbers its chips differently. Check `ls /dev/gpiochip*` and edit the unit |
 | Every relay is inverted | `active_low` does not match the board. Active-low boards are the norm |
 | One relay is inverted and the config looks right | `active_low` is set per relay, not globally — check that one entry. A misspelled key cannot be the cause: unknown keys are refused at startup |
@@ -257,10 +258,10 @@ nothing on the way.
 
 Stated so the rest can be trusted:
 
-- **Real GPIO output.** `src/pihome_hub/relays/gpio.py` has been checked against
-  gpiozero's documented constructors and never run against relays. Treat a first
-  deployment as a test. Anything above that involves a claimed pin is reasoned from the
-  code, not reproduced.
+- **Real GPIO output, beyond one board.** It has run on a Pi Zero 2 W with 32-bit
+  Raspberry Pi OS (trixie) and the lgpio pin factory, claiming and switching two
+  active-low relays. Other boards and other pin factories are reasoned from the code,
+  not reproduced.
 - **Pi 5 chip numbering.** That `DeviceAllow=/dev/gpiochip0` is wrong there follows from
   the unit being hard-coded; which chip is right on that board is not something I have
   checked.
