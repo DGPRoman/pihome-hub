@@ -9,7 +9,7 @@ notes; this describes the shape.
 ```mermaid
 flowchart TB
     phone["Phone / web app<br/>session"]
-    script["Script<br/>relay key"]
+    script["Script or camera service<br/>relay key"]
     firmware["ESP32 sensor<br/>sensor key"]
     device["HTTP device<br/>device key"]
 
@@ -225,6 +225,16 @@ relay before it touches the hardware, and the revert re-checks the relay before 
 Both are needed: the release covers an operator who re-applies the value the rule chose,
 the check covers a change that reached the relay some other way.
 
+The writer need not be a person. A program holding the relay key — a camera service that
+decides for itself when a light goes on and off — goes through the same routes and gets
+the same treatment: its write releases the hold, and from then on the relay is the
+program's until something else writes to it. The hub does not arbitrate between a rule and
+a program aimed at one relay, because it cannot tell an intent from a schedule; the two
+would keep cancelling each other's timing. One owner per relay is the configuration that
+works, and the program's own courtesy — reading a relay before switching it, and leaving
+one that is already on to whoever switched it — is the program's to keep, not the hub's to
+enforce.
+
 `release_hold` is the one method on the engine reachable from outside the event loop — the
 relay routes are sync `def`, so Starlette runs them in a worker thread. `Task.cancel` may
 only be called on the loop that owns the task, so each hold records its loop and the
@@ -256,10 +266,13 @@ cannot load the GPIO library fails loudly instead of quietly pretending to switc
 
 ## Authentication
 
-Two keys, two scopes, compared with `secrets.compare_digest`. The relay key reads and
-controls; the sensor key may only push readings. Neither is a superset of the other,
-which is the point: firmware that reports motion cannot survey the house, and a script
-cannot forge a motion event to reach a relay through a rule.
+Three keys, three scopes, compared with `secrets.compare_digest`. The relay key reads and
+controls; the sensor key may only push readings; the device key may only announce where an
+HTTP device is and which key to ask it with. None is a superset of another, which is the
+point: firmware that reports motion cannot survey the house, a script cannot forge a
+motion event to reach a relay through a rule, and neither can aim the hub at an address
+of its choosing. The device key is the one that may be absent, and then its scope
+authenticates nobody: the route is closed, not open.
 
 `ratelimit.py` counts failures in buckets, and the bucket key is where the care is:
 
@@ -267,7 +280,9 @@ cannot forge a motion event to reach a relay through a rule.
 | --- | --- |
 | `relay:<peer>` | — |
 | `sensor:<peer>` | Sharing one bucket would let a caller holding either key clear the other's failure count on every success, so a leaked sensor key would double as a rate-limit eraser |
+| `device:<peer>` | The same reason, for the third key: a device announcing with a stale key cannot spend the relay key's allowance, or clear it |
 | `probe:<peer>` | For the pre-dependency check below, so buggy firmware cannot exhaust the allowance protecting the relay key |
+| `login:<peer>` | Password attempts at `POST /v1/session`. Guessing passwords cannot exhaust the allowance protecting a key, or hide behind one a working device keeps clearing. Keyed on the peer, not the username offered, so nobody can lock an account's owner out by guessing at it |
 
 `<peer>` is the address the request came from, normalised: IPv6 collapses to its `/64`,
 because a routed prefix holds ~1.8e19 addresses and counting per address would hand out a

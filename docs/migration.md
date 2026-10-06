@@ -128,11 +128,11 @@ Anything unexpected: [troubleshooting](./troubleshooting.md).
 
 ## Keeping or rotating the keys
 
-Copying `hub.env` keeps both keys, which is usually what you want: every ESP32 keeps
+Copying `hub.env` keeps every key, which is usually what you want: every ESP32 keeps
 reporting and no script needs a new key. It also means the old Pi's disk still holds
 working credentials for the new one.
 
-To rotate instead, generate a pair on the new host and reflash or reconfigure every client:
+To rotate instead, generate new keys on the new host and reflash or reconfigure every client:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -157,4 +157,4 @@ would otherwise start a second hub with valid keys for a house it no longer runs
 writes it back where it was, and an SD card's controller does not — wear levelling puts
 the new data in a different cell and leaves the old one holding the key until it happens
 to be reused. If the card is leaving your hands, the only honest options are to rotate
-both keys or to reimage it.
+every key or to reimage it.

@@ -355,12 +355,15 @@ Reads take any account; writes take `operator` or `admin`, and a cookie-authenti
 write carries `X-Pihome-CSRF`. The API key is unchanged and still admits its holder to
 everything, because it names no account to have a role.
 
-### The two keys
+### The keys
 
-The two keys divide along a real boundary rather than a decorative one. Firmware pushes
-readings and can do nothing else — it cannot read the state of the house, and it cannot
-drive a relay directly. The relay key, for scripts, reads and controls, and cannot forge a
-motion event to reach a relay through an automation rule. A phone needs neither: it logs in.
+Three keys, divided along real boundaries rather than decorative ones. Firmware pushes
+readings with the sensor key and can do nothing else — it cannot read the state of the
+house, and it cannot drive a relay directly. The relay key, for scripts and programs such as
+a camera service, reads and controls, and cannot forge a motion event to reach a relay
+through an automation rule. The device key only lets an [HTTP device](#devices) say where
+it is, and is optional: a hub with none configured refuses every announcement. A phone needs
+none of them: it logs in.
 
 ```console
 $ curl -X POST -H "X-API-Key: $SENSOR_KEY" -H 'Content-Type: application/json' \
@@ -398,6 +401,14 @@ while someone is still there, but it does not re-issue the command — and a wri
 `/v1/relays` calls off any hold aimed at that relay, so "stay on" means it. Relays report
 `hold_expires_at`, so a client can show that a state has a timer running against it
 instead of presenting it as settled.
+
+Not every decision has to be a rule here. [pihome-vision](https://github.com/DGPRoman/pihome-vision)
+watches a camera, decides for itself when a light goes on and when it goes off, and tells
+the hub only that, with `PUT /v1/relays/{id}` and the relay key. Those are writes through
+`/v1/relays` like a person's, so they call off any hold a rule has on that relay: give each
+light to the hub's rules or to such a program, not to both, or each will cut the other's
+timing short. It reads a relay before switching it on and leaves alone one that is on
+already, so a light somebody switched on by hand is not switched off under them.
 
 Every id a rule names is checked at startup: a rule pointing at a relay or device that
 does not exist stops the service with a message naming the rule, rather than failing

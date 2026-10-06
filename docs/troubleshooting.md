@@ -145,8 +145,8 @@ this service offers — the recovery would be editing SQLite by hand over SSH.
 | `401` on `/v1/users` with a key that works everywhere else | `{"detail":"Not authenticated"}` | The account routes take an admin's session, never a key. Log in |
 | `403` on `/v1/users/{username}` | `{"detail":"Admin accounts are managed with pihome-hub-admin on the hub, not over HTTP"}` | The target is an admin account. Use the console |
 
-Two keys, and the split is real: the sensor key pushes readings and can do nothing else,
-and the relay key cannot forge a reading. A sensor key on `GET /v1/relays` is a `401`, not
+Three keys, and the split is real: the sensor key pushes readings and can do nothing
+else, the device key only announces a device, and the relay key cannot forge a reading. A sensor key on `GET /v1/relays` is a `401`, not
 a `403` — the service does not confirm that a key is valid but under-privileged.
 
 The limiter counts per client **and per scope**, which is visible in the journal:
