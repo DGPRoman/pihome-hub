@@ -39,7 +39,9 @@ INSTALL_ROOT="$(unit_value WorkingDirectory)"
 VENV="$(dirname -- "$(dirname -- "$(unit_value ExecStart)")")"
 CONFIG_DIR="$(dirname -- "$ENV_FILE")"
 RELAY_CONFIG="$CONFIG_DIR/relays.yaml"
-readonly SERVICE_USER GPIO_GROUP ENV_FILE INSTALL_ROOT VENV CONFIG_DIR RELAY_CONFIG
+STATE_DIR="/var/lib/$(unit_value StateDirectory)"
+ADMIN_TOOL=/usr/local/sbin/pihome-hub-admin
+readonly SERVICE_USER GPIO_GROUP ENV_FILE INSTALL_ROOT VENV CONFIG_DIR RELAY_CONFIG STATE_DIR ADMIN_TOOL
 
 # -- Preflight ---------------------------------------------------------------
 
@@ -148,6 +150,27 @@ say "installing $UNIT_NAME"
 install -m 644 -o root -g root "$UNIT_SOURCE" "/etc/systemd/system/$UNIT_NAME"
 systemctl daemon-reload
 systemctl enable "$UNIT_NAME" >/dev/null
+
+# -- Admin tool --------------------------------------------------------------
+
+# pihome-hub-admin finds the database through STATE_DIRECTORY, which systemd sets for
+# the service and nothing sets at a shell; without it the tool looks in ./var, under
+# wherever it was run. The venv is not on anybody's PATH either. This puts it there,
+# pointed at the directory the unit declares and run as the account that owns it.
+say "installing $ADMIN_TOOL"
+install -m 755 -o root -g root /dev/stdin "$ADMIN_TOOL" <<EOF
+#!/bin/sh
+# Written by deploy/install.sh. pihome-hub-admin against the state directory the
+# unit declares, as $SERVICE_USER: run it with sudo, or with sudo -u $SERVICE_USER.
+case "\$(id -un)" in
+root) exec runuser -u $SERVICE_USER -- env STATE_DIRECTORY=$STATE_DIR $VENV/bin/pihome-hub-admin "\$@" ;;
+$SERVICE_USER) exec env STATE_DIRECTORY=$STATE_DIR $VENV/bin/pihome-hub-admin "\$@" ;;
+*)
+    echo "pihome-hub-admin: run it with sudo" >&2
+    exit 1
+    ;;
+esac
+EOF
 
 # The example names pins it guessed for somebody else's board. Starting on it would
 # close relays chosen at random, so a fresh install stops here and says so.

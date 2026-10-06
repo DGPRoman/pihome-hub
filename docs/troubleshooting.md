@@ -121,6 +121,8 @@ command line itself was wrong. Every message below was produced by the installed
 | --- | --- | --- |
 | `/var/lib/pihome-hub belongs to 'pihome', and a database written there as root is one the service cannot write` | Run as root, or under plain `sudo` | `sudo -u pihome pihome-hub-admin ...`, as the message says |
 | `could not open the database at …: unable to open database file` | Run as an account that cannot write the state directory | As above |
+| `could not open the database at var/hub.db: … Permission denied: 'var'` | The tool was run from the virtualenv, which looks for the database under the current directory: only systemd says where the state directory is | `sudo -u pihome pihome-hub-admin ...`, the wrapper `deploy/install.sh` installs in `/usr/local/sbin`. Re-run the installer if it is missing |
+| `app install` ends in `[Errno 13] Permission denied` naming the APK | The service account reads the file, and cannot read a home directory | Copy it to `/tmp` first |
 | `no account named 'roman'` | A typo, or the wrong Pi | `pihome-hub-admin list` shows what exists |
 | `an account named 'Roman' already exists` | Names are unique ignoring case | Pick another name; `Roman` and `roman` cannot both exist |
 | `username 'no spaces' must be letters and digits, optionally separated by '.', '_' or '-'` | A space, or a character that does not read the same everywhere | Reported before the password prompt, so nothing was typed twice |
