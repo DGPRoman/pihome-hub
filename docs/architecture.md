@@ -8,7 +8,8 @@ notes; this describes the shape.
 
 ```mermaid
 flowchart TB
-    phone["Phone / web app<br/>relay key"]
+    phone["Phone / web app<br/>session"]
+    script["Script<br/>relay key"]
     firmware["ESP32 sensor<br/>sensor key"]
     device["HTTP device<br/>device key"]
 
@@ -21,7 +22,7 @@ flowchart TB
         deviceroutes["v1/devices.py"]
     end
 
-    guard["security.py + ratelimit.py<br/>three keys, three scopes"]
+    guard["security.py + ratelimit.py<br/>three keys, and sessions with a role"]
 
     subgraph core["domain — no FastAPI, no request objects"]
         relayservice["relays/service.py<br/>logical on/off"]
@@ -36,6 +37,7 @@ flowchart TB
     real["gpio.py<br/>gpiozero → /dev/gpiochip0"]
 
     phone --> relayroutes
+    script --> relayroutes
     firmware --> sensorroutes
     device --> deviceroutes
     relayroutes -.->|depends on| guard
@@ -256,7 +258,7 @@ cannot load the GPIO library fails loudly instead of quietly pretending to switc
 
 Two keys, two scopes, compared with `secrets.compare_digest`. The relay key reads and
 controls; the sensor key may only push readings. Neither is a superset of the other,
-which is the point: firmware that reports motion cannot survey the house, and a phone
+which is the point: firmware that reports motion cannot survey the house, and a script
 cannot forge a motion event to reach a relay through a rule.
 
 `ratelimit.py` counts failures in buckets, and the bucket key is where the care is:

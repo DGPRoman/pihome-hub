@@ -76,8 +76,8 @@ project with no commercial support and no bug bounty.
   and passing for the home network when a session is renewed. Behind a reverse proxy on
   another machine every request therefore looks like it comes from that proxy, and rate
   limiting belongs in the proxy instead.
-- **No protection against a compromised client.** A key held by a phone or a sensor is
-  a key an attacker who owns that device also holds.
+- **No protection against a compromised client.** A key held by a script or a sensor, or
+  a session held by a phone, is a credential an attacker who owns that device also holds.
 - **Offline guessing of a stolen hash is slowed, not prevented.** `scrypt` at 16 MiB is
   a deliberate compromise for a board with 512 MB of RAM, not the strongest setting
   available. A weak password in a stolen database is still a weak password; the 12-

@@ -9,11 +9,11 @@ to survive the move.
 
 | Path | Move it? | Why |
 | --- | --- | --- |
-| `/etc/pihome-hub/hub.env` | yes — with one edit, below | The two API keys. Copying it means firmware and phones keep working unchanged |
+| `/etc/pihome-hub/hub.env` | yes — with one edit, below | The API keys. Copying it means firmware and scripts keep working unchanged |
 | `/etc/pihome-hub/relays.yaml` | yes | The wiring. This describes the house, not the Pi |
 | `/etc/pihome-hub/sensors.yaml` | yes, **if you have one** | See the warning below |
 | `/etc/pihome-hub/automation.yaml` | yes, **if you have one** | Same |
-| `/var/lib/pihome-hub/hub.db` | yes, once there are accounts | Users and their password hashes. Leaving it behind means every account has to be created again on the new Pi |
+| `/var/lib/pihome-hub/hub.db` | yes, once there are accounts | Users, their password hashes and their sessions. Leaving it behind means every account has to be created again on the new Pi, and every phone signs in again |
 | `/opt/pihome-hub` | no | `git clone` it again |
 | `/opt/pihome-hub/.venv` | **never** | A virtualenv hard-codes its own path and links against the Python that built it. Copying one between hosts is how you get an interpreter that half-works |
 | `/etc/systemd/system/pihome-hub.service` | no | The installer writes it from the repository, so it can never lag behind the code |
@@ -129,7 +129,7 @@ Anything unexpected: [troubleshooting](./troubleshooting.md).
 ## Keeping or rotating the keys
 
 Copying `hub.env` keeps both keys, which is usually what you want: every ESP32 keeps
-reporting and no phone needs reconfiguring. It also means the old Pi's disk still holds
+reporting and no script needs a new key. It also means the old Pi's disk still holds
 working credentials for the new one.
 
 To rotate instead, generate a pair on the new host and reflash or reconfigure every client:
