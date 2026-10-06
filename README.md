@@ -164,6 +164,10 @@ On a Pi the database belongs to the service account, so run the tool as that acc
 sudo -u pihome pihome-hub-admin list
 ```
 
+`deploy/install.sh` puts it on the `PATH` as a short wrapper in `/usr/local/sbin`, which
+also tells it where the database is: systemd tells the service, and nothing tells a shell.
+Plain `sudo pihome-hub-admin` works too, and switches to the service account itself.
+
 As root it would leave behind a root-owned database that the service cannot write, and
 systemd does not repair that — so it refuses, and names the account to use instead.
 
@@ -268,7 +272,9 @@ sudo -u pihome pihome-hub-admin app show
 sudo -u pihome pihome-hub-admin app remove                     # the join page stops offering it
 ```
 
-It is kept beside the database, at `PIHOME_ANDROID_APP_PATH`, and replaced in one rename, so
+The service account reads the APK, so put it somewhere that account can: a home
+directory is not, and `/tmp` is. It is kept beside the database, at
+`PIHOME_ANDROID_APP_PATH`, and replaced in one rename, so
 a phone downloading at that moment gets the old file or the new one. `/app/pihome.apk` serves
 it and `/app/android.json` describes it, both without a session, since the phone has none
 yet. A first install over plain `http://` trusts the home network the way the web client
@@ -462,6 +468,7 @@ rather than upgrading it: [Moving to another Pi](docs/migration.md).
 | `/etc/pihome-hub/hub.env` | `root:root`, `600` | both API keys and every `PIHOME_*` setting |
 | `/etc/pihome-hub/relays.yaml` | `root:pihome`, `640` | the wiring |
 | `/etc/systemd/system/pihome-hub.service` | `root` | the unit |
+| `/usr/local/sbin/pihome-hub-admin` | `root`, `755` | the account tool, run as `pihome` against the state directory |
 
 **Two permissions, because two different things read them.** `hub.env` is opened by systemd
 as PID 1, which passes the values in as environment — so the service account never needs

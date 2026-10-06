@@ -118,6 +118,18 @@ class TestInstallerMatchesTheCode:
         for relative in referenced:
             assert (REPO_ROOT / relative).is_file()
 
+    def test_the_admin_tool_it_installs_is_one_the_package_installs(self, script: str) -> None:
+        pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        run = re.findall(r"STATE_DIRECTORY=\$STATE_DIR \$VENV/bin/([\w-]+)", script)
+
+        assert run, "the installer no longer puts the admin tool on the PATH"
+        assert set(run) <= set(pyproject["project"]["scripts"])
+
+    def test_the_admin_tool_finds_the_state_directory_the_unit_declares(self, script: str) -> None:
+        """At a shell nothing exports STATE_DIRECTORY, so the wrapper has to."""
+        assert 'STATE_DIR="/var/lib/$(unit_value StateDirectory)"' in script
+        assert script.count("STATE_DIRECTORY=$STATE_DIR") == 2
+
     def test_its_port_fallback_is_the_configured_default(self, script: str) -> None:
         # Only reached for a hub.env written before the installer existed, which is
         # exactly why nothing would notice the two drifting apart.
