@@ -87,6 +87,15 @@ class TestTheUnitGivesTheServiceSomewhereToWrite:
 
         assert build_settings().database_path.parent == state_directory
 
+    def test_lgpio_writes_into_the_runtime_directory(self, service: dict[str, str]) -> None:
+        """Left to itself it writes into the working directory, which is read-only."""
+        runtime_directory = Path("/run") / service["RuntimeDirectory"]
+
+        assert f"LG_WD={runtime_directory}" in service["Environment"].split()
+
+    def test_the_runtime_directory_is_not_world_readable(self, service: dict[str, str]) -> None:
+        assert service.get("RuntimeDirectoryMode") == "0700"
+
 
 class TestSandboxLeavesTheHardwareReachable:
     @pytest.mark.parametrize("option", sorted(_SAFE_SANDBOX_VALUES))

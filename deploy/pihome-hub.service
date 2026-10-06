@@ -48,6 +48,13 @@ SyslogIdentifier=pihome-hub
 StateDirectory=pihome-hub
 StateDirectoryMode=0700
 
+# lgpio, under gpiozero, makes its notification pipes in LG_WD, which defaults to the
+# working directory: the checkout, which is read-only. Without somewhere to write,
+# no pin can be claimed. /run/pihome-hub belongs to the service and goes when it stops.
+RuntimeDirectory=pihome-hub
+RuntimeDirectoryMode=0700
+Environment=LG_WD=/run/pihome-hub
+
 # -- Sandbox -----------------------------------------------------------------
 # Everything else stays read-only: readings live in memory, logs go to the journal.
 ProtectSystem=strict
