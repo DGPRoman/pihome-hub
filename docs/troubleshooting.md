@@ -155,7 +155,7 @@ pihome_hub.security: authentication attempt rejected: too many recent failures
 client='relay:127.0.0.1' scope='relay' path='/v1/relays'
 ```
 
-So a phone retrying a stale key locks out relay reads while sensors keep reporting
+So a script retrying a stale key locks out relay reads while sensors keep reporting
 normally. Wait out `PIHOME_AUTH_FAILURE_WINDOW_SECONDS` (300 by default) or restart the
 service — the counters are in memory.
 

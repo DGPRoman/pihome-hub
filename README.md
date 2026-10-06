@@ -5,7 +5,10 @@ HTTP control plane for a Raspberry Pi wired to relay-switched circuits.
 It exposes relays as a small REST API, accepts readings pushed by ESP32 sensors, and
 runs declarative automation rules — the sort that turns on outdoor lights when a motion
 sensor fires, but only after dark. It runs on a Raspberry Pi Zero 2 W that stays powered
-around the clock, and it is deliberately small enough to read in one sitting.
+around the clock, and it is deliberately small enough to read in one sitting. People use
+it from a browser, with [`pihome-hub-web`](https://github.com/DGPRoman/pihome-hub-web),
+or from an Android phone, with [`pihome-android`](https://github.com/DGPRoman/pihome-android);
+both log in with an account.
 
 > **Status: functional and deployable.** Relay control, sensor ingestion, automation
 > and polling of HTTP devices all work and are covered by tests, and two files
@@ -103,7 +106,7 @@ beside the project. [`.env.example`](.env.example) documents each one.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PIHOME_RELAY_API_KEY` | *required* | Authenticates relay control clients |
+| `PIHOME_RELAY_API_KEY` | *required* | Authenticates scripts and programs that control relays. People log in instead |
 | `PIHOME_SENSOR_API_KEY` | *required* | Authenticates sensor devices pushing readings |
 | `PIHOME_DEVICE_API_KEY` | *unset* | Authenticates HTTP devices announcing their address. Unset refuses every announcement; required once a device is declared |
 | `PIHOME_HOST` | `127.0.0.1` | Bind address |
@@ -350,8 +353,8 @@ everything, because it names no account to have a role.
 
 The two keys divide along a real boundary rather than a decorative one. Firmware pushes
 readings and can do nothing else — it cannot read the state of the house, and it cannot
-drive a relay directly. The phone reads and controls, and cannot forge a motion event to
-reach a relay through an automation rule.
+drive a relay directly. The relay key, for scripts, reads and controls, and cannot forge a
+motion event to reach a relay through an automation rule. A phone needs neither: it logs in.
 
 ```console
 $ curl -X POST -H "X-API-Key: $SENSOR_KEY" -H 'Content-Type: application/json' \
