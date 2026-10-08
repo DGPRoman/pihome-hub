@@ -308,6 +308,7 @@ replaying it does not produce the same result twice.
 | `GET` | `/v1/relays/{id}` | Read one relay |
 | `PUT` | `/v1/relays/{id}` | Set one relay — body `{"on": false}` |
 | `POST` | `/v1/relays/{id}/toggle` | Invert one relay |
+| `PUT` | `/v1/relays/{id}/automatic` | Turn one relay's [automation](#automation) off — body `{"automatic": false}` — or back on |
 | `GET` | `/v1/sensors` | Every sensor, its latest reading, and whether it is stale |
 | `GET` | `/v1/sensors/{id}` | Read one sensor |
 | `POST` | `/v1/sensors/{id}/readings` | Push a reading — **sensor key**, not the relay key |
@@ -402,6 +403,24 @@ while someone is still there, but it does not re-issue the command — and a wri
 `hold_expires_at`, so a client can show that a state has a timer running against it
 instead of presenting it as settled.
 
+Somebody standing in the yard for a long while can tell the house to leave one light
+alone, rather than have it switched on every time they move. That is turning the relay's
+automation off, and every relay reports whether it is on in `automatic` — `true` unless a
+person has turned it off:
+
+```console
+$ curl -X PUT -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+       -d '{"automatic": false}' http://127.0.0.1:5002/v1/relays/porch-light/automatic
+{"id":"porch-light","label":"Porch light","on":false,"automatic":false,"hold_expires_at":null}
+```
+
+Turning it off calls off any hold on the relay and switches it off if it is on; from then
+on the hub's rules neither switch it on nor off. `{"automatic": true}` hands it back and
+switches nothing — the next change a rule sees is what moves it. It takes an operator, as
+switching does. The choice is kept in the database, so it survives a restart, and it has
+no timer: it lasts until somebody turns automation back on. A person can still switch the
+relay by hand meanwhile, and doing so does not hand it back.
+
 Not every decision has to be a rule here. [pihome-vision](https://github.com/DGPRoman/pihome-vision)
 watches a camera, decides for itself when a light goes on and when it goes off, and tells
 the hub only that, with `PUT /v1/relays/{id}` and the relay key. Those are writes through
@@ -409,6 +428,13 @@ the hub only that, with `PUT /v1/relays/{id}` and the relay key. Those are write
 light to the hub's rules or to such a program, not to both, or each will cut the other's
 timing short. It reads a relay before switching it on and leaves alone one that is on
 already, so a light somebody switched on by hand is not switched off under them.
+
+**A client that switches relays on the house's behalf reads `automatic` before switching
+one on, and leaves the relay alone while it is `false`.** That goes for a camera service
+and for any other program holding the relay key. The hub cannot enforce it: the key
+admits a person's script exactly as it admits such a program, and a request does not say
+which of the two sent it. A light whose automation is off is one a person has asked the
+house to leave to them, and the house includes whatever acts for it.
 
 Every id a rule names is checked at startup: a rule pointing at a relay or device that
 does not exist stops the service with a message naming the rule, rather than failing
@@ -576,7 +602,7 @@ src/pihome_hub/
 │   └── service.py     logical on/off/toggle over configured relays
 ├── sensors/           declared devices and the latest reading from each, in memory
 ├── devices/           HTTP devices: where they announced, and the poller that asks
-├── automation/        rules, the engine that applies them, and sunrise/sunset
+├── automation/        rules, the engine that applies them, sunrise/sunset, and which relays have automation off
 ├── accounts/          users, roles, and scrypt password hashing
 └── storage/           the SQLite file: connection pragmas and schema versioning
 config/                *.example.yaml — copy and edit; the real files are ignored

@@ -10,12 +10,18 @@ Rules fire on a *change*, never on a repeat. A motion sensor reporting on an
 interval sends the same value over and over; re-applying the action on each one
 would mean the house overrides its operator every few seconds, and no manual
 switch would hold for longer than one reporting period.
+
+A person can also take a relay out of the rules' hands altogether by turning its
+automation off, and the engine then neither switches it on nor off until it is
+handed back. That is not a hold: a hold is a rule's own countdown to undo itself,
+while this is somebody in the yard telling the house to leave one light alone.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -26,6 +32,7 @@ import anyio.to_thread
 
 from pihome_hub.automation.errors import AutomationConfigError
 from pihome_hub.automation.models import AutomationRule
+from pihome_hub.automation.store import RelayAutomationStore
 from pihome_hub.automation.sun import DarknessOracle
 from pihome_hub.relays import RelayService
 from pihome_hub.sensors import SensorReading, SensorStore
@@ -59,18 +66,22 @@ class _Hold:
 class AutomationEngine:
     """Applies rules, and owns the hold timers they schedule."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - everything after the rules is keyword-only and optional
         self,
         relays: RelayService,
         rules: Iterable[AutomationRule],
         *,
         sun: DarknessOracle | None = None,
         sensors: SensorStore | None = None,
+        relay_automation: RelayAutomationStore | None = None,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._relays = relays
         self._sun = sun
         self._clock = clock
+        #: Where a person's choice to turn a relay's automation off is kept. Without
+        #: one the choice lasts as long as this engine, which is all a test needs.
+        self._store = relay_automation
         #: Every rule as configured. Kept so the API can report a disabled rule as
         #: disabled rather than omitting it.
         self._configured = list(rules)
@@ -78,10 +89,22 @@ class AutomationEngine:
         #: One pending revert per relay, keyed by relay id — a second rule acting on
         #: the same relay replaces the first one's timer rather than racing it.
         self._holds: dict[str, _Hold] = {}
-        #: Guards ``_holds``. Reached from two places at once: the event loop, where
-        #: readings are handled, and Starlette's threadpool, where the sync relay
-        #: routes run and release a hold the operator has overruled.
+        #: Relay ids whose automation a person has turned off. Read on every rule
+        #: that fires, so it is held here rather than asked of the database each time;
+        #: the store is written first and this follows it.
+        self._automation_off: set[str] = set()
+        #: Guards ``_holds`` and ``_automation_off``. Reached from two places at once:
+        #: the event loop, where readings are handled, and Starlette's threadpool,
+        #: where the sync relay routes run and release a hold the operator has
+        #: overruled.
         self._lock = threading.Lock()
+        #: Makes a rule's "is this relay still mine?" and its write to the relay one
+        #: step, and turning automation off another. Without it a rule could check,
+        #: lose the race to a person turning automation off and switching the light
+        #: off, and then switch it back on regardless. Separate from ``_lock``
+        #: because it is held across a relay write, which is far too long to keep
+        #: the event loop from reading a hold.
+        self._switching = threading.Lock()
 
         self._validate_references(sensors)
 
@@ -152,6 +175,58 @@ class AutomationEngine:
         hold.loop.call_soon_threadsafe(hold.task.cancel)
         return True
 
+    def automatic(self, relay_id: str) -> bool:
+        """Whether the rules may switch this relay: true unless a person said otherwise."""
+        with self._lock:
+            return relay_id not in self._automation_off
+
+    def restore_automatic(self) -> frozenset[str]:
+        """Read back which relays a person turned automation off for. Returns them.
+
+        Called once at startup, by the lifespan, rather than by the constructor:
+        ``check_configuration`` builds an engine to validate the rules before the
+        database has been prepared, and that one must not touch the file.
+        """
+        if self._store is None:
+            return frozenset()
+        turned_off = self._store.turned_off()
+        with self._lock:
+            self._automation_off = set(turned_off)
+        return turned_off
+
+    def set_automatic(self, relay_id: str, *, automatic: bool) -> None:
+        """Hand a relay to the rules, or take it away from them until handed back.
+
+        Turning automation off calls off any hold on the relay and switches it off
+        if it is on: the person asking is standing under a light the house keeps
+        switching on, and what they want is the light out and left that way.
+        Turning it back on switches nothing. The next change a rule sees is what
+        moves the relay, as it would have been anyway.
+
+        The choice is stored before it takes effect, so a database that refuses the
+        write leaves everything as it was. Raises for an unknown relay. Safe from
+        any thread; the route that calls this runs in Starlette's threadpool.
+        """
+        self._relays.config_for(relay_id)
+        with self._switching:
+            if self._store is not None:
+                self._store.set_automatic(relay_id, automatic=automatic)
+            with self._lock:
+                if automatic:
+                    self._automation_off.discard(relay_id)
+                else:
+                    self._automation_off.add(relay_id)
+            if automatic:
+                return
+
+            if self.release_hold(relay_id):
+                logger.info(
+                    "automation hold released: automation turned off",
+                    extra={"relay_id": relay_id},
+                )
+            if self._relays.state_of(relay_id):
+                self._relays.turn_off(relay_id)
+
     async def handle_reading(
         self, device_id: str, reading: SensorReading, *, previous_motion: bool | None
     ) -> list[str]:
@@ -184,8 +259,8 @@ class AutomationEngine:
             if rule.only_after_dark and not self._dark_enough(rule.id, device_id):
                 continue
 
-            await self._apply(rule)
-            fired.append(rule.id)
+            if await self._apply(rule):
+                fired.append(rule.id)
 
         return fired
 
@@ -223,8 +298,8 @@ class AutomationEngine:
             )
         return dark
 
-    async def _drive(self, relay_id: str, *, on: bool) -> None:
-        """Set one relay, off the event loop.
+    async def _drive(self, relay_id: str, *, on: bool) -> bool:
+        """Set one relay, off the event loop. Returns false if automation is off for it.
 
         Everything below :class:`RelayService` is synchronous and blocking — a
         ``threading.RLock`` and then a write to a GPIO pin — and this is the only
@@ -237,23 +312,49 @@ class AutomationEngine:
         relay write stalled the loop for 260 ms. Nothing about the mutual exclusion
         is wrong — the question was only ever which thread pays for it.
         """
-        await anyio.to_thread.run_sync(
-            self._relays.turn_on if on else self._relays.turn_off, relay_id
+        return await anyio.to_thread.run_sync(
+            functools.partial(self._drive_if_automatic, relay_id, on=on)
         )
 
-    async def _apply(self, rule: AutomationRule) -> None:
+    def _drive_if_automatic(self, relay_id: str, *, on: bool) -> bool:
+        """The check and the write as one step, on a worker thread. See ``_switching``."""
+        with self._switching:
+            if not self.automatic(relay_id):
+                return False
+            if on:
+                self._relays.turn_on(relay_id)
+            else:
+                self._relays.turn_off(relay_id)
+            return True
+
+    async def _apply(self, rule: AutomationRule) -> bool:
+        """Drive the rule's relay and start its hold. Returns whether the rule acted.
+
+        Whether automation is off is checked at the moment of writing, not before,
+        so there is no gap for a person turning it off to fall into.
+        """
         relay_id = rule.then.relay
         target = rule.then.turn_on
 
+        # Before the write, so an older countdown cannot wake during it. A relay
+        # whose automation is off has no hold for this to take away: turning it off
+        # released the one it had, and no rule can schedule another.
         self._cancel_hold(relay_id)
 
-        await self._drive(relay_id, on=target)
+        if not await self._drive(relay_id, on=target):
+            logger.debug(
+                "rule skipped: automation is off for its relay",
+                extra={"rule_id": rule.id, "relay_id": relay_id},
+            )
+            return False
+
         logger.info(
             "automation rule fired",
             extra={"rule_id": rule.id, "relay_id": relay_id, "on": target},
         )
 
         self._schedule_hold(rule, applied=target)
+        return True
 
     def _extend_hold(self, rule: AutomationRule) -> None:
         """Restart this rule's countdown, leaving the relay alone.
@@ -286,6 +387,11 @@ class AutomationEngine:
             name=f"pihome-hold-{relay_id}",
         )
         with self._lock:
+            if relay_id in self._automation_off:
+                # Turned off between the rule's write and here. Whoever did it has
+                # already released the hold they could see; this one they could not.
+                task.cancel()
+                return
             self._holds[relay_id] = _Hold(
                 rule=rule,
                 applied=applied,
@@ -316,7 +422,12 @@ class AutomationEngine:
                 )
                 return
 
-            await self._drive(relay_id, on=not applied)
+            if not await self._drive(relay_id, on=not applied):
+                logger.info(
+                    "hold expired, but automation is off for the relay; leaving it",
+                    extra={"rule_id": rule.id, "relay_id": relay_id},
+                )
+                return
             logger.info(
                 "automation hold expired",
                 extra={"rule_id": rule.id, "relay_id": relay_id, "on": not applied},

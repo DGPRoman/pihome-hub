@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -14,10 +15,12 @@ from pihome_hub.automation import (
     AutomationConfigError,
     AutomationEngine,
     AutomationRule,
+    RelayAutomationStore,
     Trigger,
 )
-from pihome_hub.relays import RelayConfig, RelayService
+from pihome_hub.relays import RelayConfig, RelayService, UnknownRelayError
 from pihome_hub.sensors import SensorDevice, SensorReading, SensorStore
+from pihome_hub.storage import StorageError, prepare_database
 from tests.conftest import CountingRelayBackend
 
 #: Short enough to keep the suite fast, long enough not to race the assertions.
@@ -626,6 +629,198 @@ def live_hold_tasks() -> int:
         for task in asyncio.all_tasks()
         if task.get_name().startswith("pihome-hold-") and not task.done() and task.cancelling() == 0
     )
+
+
+@pytest.mark.anyio
+class TestAutomationOff:
+    """A person telling the house to leave one relay alone, until they say otherwise."""
+
+    async def test_every_relay_starts_automatic(self) -> None:
+        engine = AutomationEngine(make_relays(), [motion_rule()], sensors=make_sensors())
+
+        assert engine.automatic("porch-light") is True
+        assert engine.automatic("gate-light") is True
+
+    async def test_a_rule_does_not_switch_the_relay_on(self) -> None:
+        backend = CountingRelayBackend()
+        relays = make_relays(backend)
+        engine = AutomationEngine(relays, [motion_rule()], sensors=make_sensors())
+        engine.set_automatic("porch-light", automatic=False)
+
+        fired = await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        assert fired == [], "a rule that left the relay alone was reported as fired"
+        assert relays.state_of("porch-light") is False
+        assert backend.writes_to(PORCH_PIN) == []
+
+    async def test_a_rule_does_not_switch_the_relay_off_either(self) -> None:
+        """Leaving it alone means in both directions. A person who switched the light
+        on by hand after turning automation off keeps it on."""
+        backend = CountingRelayBackend()
+        relays = make_relays(backend)
+        engine = AutomationEngine(relays, [motion_rule(state="off")], sensors=make_sensors())
+        engine.set_automatic("porch-light", automatic=False)
+        relays.turn_on("porch-light")
+
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        assert relays.state_of("porch-light") is True
+        assert backend.writes_to(PORCH_PIN) == [True]
+
+    async def test_other_relays_are_still_automated(self) -> None:
+        relays = make_relays()
+        rules = [motion_rule(), motion_rule(rule_id="gate-motion-light", relay="gate-light")]
+        engine = AutomationEngine(relays, rules, sensors=make_sensors())
+        engine.set_automatic("porch-light", automatic=False)
+
+        fired = await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        assert fired == ["gate-motion-light"]
+        assert relays.state_of("gate-light") is True
+
+    async def test_turning_it_off_switches_a_lit_relay_off(self) -> None:
+        relays = make_relays()
+        engine = AutomationEngine(relays, [motion_rule()], sensors=make_sensors())
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        engine.set_automatic("porch-light", automatic=False)
+
+        assert relays.state_of("porch-light") is False
+
+    async def test_turning_it_off_does_not_write_to_a_relay_already_off(self) -> None:
+        backend = CountingRelayBackend()
+        engine = AutomationEngine(make_relays(backend), [motion_rule()], sensors=make_sensors())
+
+        engine.set_automatic("porch-light", automatic=False)
+
+        assert backend.writes_to(PORCH_PIN) == []
+
+    async def test_turning_it_off_releases_the_hold(self) -> None:
+        """Otherwise the countdown is still the rule's, acting on a relay that is not.
+
+        An off rule, so the relay is already where turning automation off leaves it
+        and the revert — back on — is the only write left to make.
+        """
+        backend = CountingRelayBackend()
+        relays = make_relays(backend)
+        relays.turn_on("porch-light")
+        engine = AutomationEngine(
+            relays, [motion_rule(hold=HOLD, state="off")], sensors=make_sensors()
+        )
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+        assert engine.hold_expiry("porch-light") is not None
+
+        engine.set_automatic("porch-light", automatic=False)
+
+        assert engine.hold_expiry("porch-light") is None
+        assert engine.pending_holds == frozenset()
+        await asyncio.sleep(HOLD * 3)
+        assert backend.writes_to(PORCH_PIN) == [True, False], "the released hold still fired"
+
+    async def test_sustained_motion_does_not_bring_a_hold_back(self) -> None:
+        relays = make_relays()
+        engine = AutomationEngine(relays, [motion_rule(hold=HOLD)], sensors=make_sensors())
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+        engine.set_automatic("porch-light", automatic=False)
+
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=True
+        )
+
+        assert engine.hold_expiry("porch-light") is None
+
+    async def test_turning_it_back_on_switches_nothing(self) -> None:
+        backend = CountingRelayBackend()
+        relays = make_relays(backend)
+        engine = AutomationEngine(relays, [motion_rule()], sensors=make_sensors())
+        engine.set_automatic("porch-light", automatic=False)
+        relays.turn_on("porch-light")
+
+        engine.set_automatic("porch-light", automatic=True)
+
+        assert engine.automatic("porch-light") is True
+        assert relays.state_of("porch-light") is True
+        assert backend.writes_to(PORCH_PIN) == [True]
+
+    async def test_the_next_change_after_turning_it_back_on_fires(self) -> None:
+        relays = make_relays()
+        engine = AutomationEngine(relays, [motion_rule()], sensors=make_sensors())
+        engine.set_automatic("porch-light", automatic=False)
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+        await engine.handle_reading(
+            "porch-motion", SensorReading(motion=False), previous_motion=True
+        )
+
+        engine.set_automatic("porch-light", automatic=True)
+        fired = await engine.handle_reading(
+            "porch-motion", SensorReading(motion=True), previous_motion=False
+        )
+
+        assert fired == ["porch-motion-light"]
+        assert relays.state_of("porch-light") is True
+
+    async def test_an_unknown_relay_is_refused(self) -> None:
+        engine = AutomationEngine(make_relays(), [motion_rule()], sensors=make_sensors())
+
+        with pytest.raises(UnknownRelayError):
+            engine.set_automatic("ghost-relay", automatic=False)
+
+    async def test_the_choice_is_restored_by_a_later_engine(self, tmp_path: Path) -> None:
+        """A restart is not the person changing their mind."""
+        database = tmp_path / "hub.db"
+        prepare_database(database)
+        relays = make_relays()
+        first = AutomationEngine(
+            relays,
+            [motion_rule()],
+            sensors=make_sensors(),
+            relay_automation=RelayAutomationStore(database),
+        )
+        first.set_automatic("porch-light", automatic=False)
+
+        second = AutomationEngine(
+            relays,
+            [motion_rule()],
+            sensors=make_sensors(),
+            relay_automation=RelayAutomationStore(database),
+        )
+        assert second.automatic("porch-light") is True, "read before it was asked to restore"
+
+        assert second.restore_automatic() == frozenset({"porch-light"})
+        assert second.automatic("porch-light") is False
+        assert second.automatic("gate-light") is True
+
+    async def test_a_choice_that_cannot_be_stored_changes_nothing(self, tmp_path: Path) -> None:
+        """Stored first, so the engine never acts on an instruction it will forget."""
+        relays = make_relays()
+        relays.turn_on("porch-light")
+        engine = AutomationEngine(
+            relays,
+            [motion_rule()],
+            sensors=make_sensors(),
+            # Never prepared: the table this writes to does not exist.
+            relay_automation=RelayAutomationStore(tmp_path / "hub.db"),
+        )
+
+        with pytest.raises(StorageError):
+            engine.set_automatic("porch-light", automatic=False)
+
+        assert engine.automatic("porch-light") is True
+        assert relays.state_of("porch-light") is True
 
 
 @pytest.mark.anyio

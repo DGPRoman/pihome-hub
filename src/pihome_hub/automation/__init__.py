@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pihome_hub.automation.config import load_automation
 from pihome_hub.automation.engine import AutomationEngine
-from pihome_hub.automation.errors import AutomationConfigError, AutomationError
+from pihome_hub.automation.errors import (
+    AutomationConfigError,
+    AutomationError,
+    AutomationUnavailableError,
+)
 from pihome_hub.automation.models import (
     Action,
     AutomationConfig,
@@ -12,6 +16,7 @@ from pihome_hub.automation.models import (
     Location,
     Trigger,
 )
+from pihome_hub.automation.store import RelayAutomationStore
 from pihome_hub.automation.sun import DarknessOracle, SunClock
 
 __all__ = [
@@ -21,8 +26,10 @@ __all__ = [
     "AutomationEngine",
     "AutomationError",
     "AutomationRule",
+    "AutomationUnavailableError",
     "DarknessOracle",
     "Location",
+    "RelayAutomationStore",
     "SunClock",
     "Trigger",
     "load_automation",

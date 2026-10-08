@@ -14,8 +14,13 @@ import logging
 
 from fastapi import APIRouter, Request
 
-from pihome_hub.api.v1.schemas import RelayCollection, RelayState, RelayStateRequest
-from pihome_hub.automation import AutomationEngine
+from pihome_hub.api.v1.schemas import (
+    RelayAutomaticRequest,
+    RelayCollection,
+    RelayState,
+    RelayStateRequest,
+)
+from pihome_hub.automation import AutomationEngine, AutomationUnavailableError
 from pihome_hub.relays import RelayConfig, RelayService
 from pihome_hub.security import OperatorRequired, ViewerRequired
 
@@ -74,6 +79,9 @@ def _state(relay: RelayConfig, *, on: bool, engine: AutomationEngine | None) -> 
         id=relay.id,
         label=relay.label,
         on=on,
+        # No engine means no rule is running to switch anything, which is the
+        # default the field states. It is absent only while the service shuts down.
+        automatic=True if engine is None else engine.automatic(relay.id),
         hold_expires_at=None if engine is None else engine.hold_expiry(relay.id),
     )
 
@@ -169,4 +177,33 @@ def toggle_relay(request: Request, relay_id: str) -> RelayState:
     _release_holds(request, relay_id)
     new_state = service.toggle(relay_id)
     logger.info("relay toggled", extra={"relay_id": relay_id, "on": new_state})
+    return _one(request, service, relay_id)
+
+
+@router.put(
+    "/{relay_id}/automatic",
+    summary="Turn one relay's automation off, or back on",
+    description=(
+        "Off releases any automation hold on the relay and switches it off if it is "
+        "on; from then on the hub's rules leave it alone until automation is turned "
+        "back on. On switches nothing. The choice is stored and survives a restart."
+    ),
+    dependencies=[OperatorRequired],
+    responses={404: {"description": "No relay with that id is configured"}},
+)
+def set_relay_automatic(
+    request: Request, relay_id: str, desired: RelayAutomaticRequest
+) -> RelayState:
+    service = _service(request)
+    service.config_for(relay_id)
+    engine = _automation(request)
+    if engine is None:
+        raise AutomationUnavailableError
+    # The engine rather than this route: what turning automation off has to do —
+    # store the choice, release the hold, switch the light off — must be one step
+    # against a rule firing at the same moment, and only the engine can make it one.
+    engine.set_automatic(relay_id, automatic=desired.automatic)
+    logger.info(
+        "relay automation set", extra={"relay_id": relay_id, "automatic": desired.automatic}
+    )
     return _one(request, service, relay_id)

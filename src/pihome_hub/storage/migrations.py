@@ -102,6 +102,22 @@ MIGRATIONS: Final[tuple[str, ...]] = (
     ALTER TABLE sessions ADD COLUMN renewed_at TEXT;
     UPDATE sessions SET renewed_at = created_at;
     """,
+    # 6 — the relays a person has turned automation off for.
+    """
+    -- A row is the exception, not a setting: a relay with no row is automatic. One
+    -- added to config/relays.yaml is therefore automatic without anything being
+    -- written here, which is what the API promises for every relay.
+    CREATE TABLE automation_off (
+        -- The id from config/relays.yaml. No foreign key, as for devices: which
+        -- relays exist is a statement in a file. A row whose relay has left that
+        -- file is inert and kept, because the instruction was about that light and
+        -- holds again if it comes back.
+        relay_id      TEXT PRIMARY KEY,
+        -- Not read by the hub. Kept for whoever wonders why a light has not come on
+        -- by itself in a while, and since when.
+        turned_off_at TEXT NOT NULL
+    ) WITHOUT ROWID;
+    """,
 )
 
 #: The schema this build understands.

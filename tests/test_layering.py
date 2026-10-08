@@ -24,11 +24,13 @@ _DOMAINS: Final = ("relays", "sensors", "automation", "storage", "accounts", "de
 _WEB_FRAMEWORKS: Final = ("fastapi", "starlette", "uvicorn", "pihome_hub.api")
 
 #: Which domain may import which. Automation is a statement about a sensor and a
-#: relay, so it reaches into both; neither of those needs a rule to exist.
+#: relay, so it reaches into both; neither of those needs a rule to exist. It
+#: reaches storage too, because a person turning a relay's automation off is an
+#: instruction that has to outlast the process.
 _ALLOWED_DOMAIN_IMPORTS: Final = {
     "relays": frozenset(),
     "sensors": frozenset(),
-    "automation": frozenset({"relays", "sensors"}),
+    "automation": frozenset({"relays", "sensors", "storage"}),
     # Storage knows about rows, not about relays. Which table a domain keeps its
     # state in is that domain's business, and the dependency points that way.
     "storage": frozenset(),

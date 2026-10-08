@@ -39,6 +39,9 @@ WRITE_ROUTES: list[tuple[str, str, dict[str, object] | None]] = [
     ("POST", "/v1/relays/porch-light/toggle", None),
     ("PUT", "/v1/relays", {"on": True}),
     ("POST", "/v1/relays/toggle", None),
+    # Not a switch, but it can switch a light off and keep the rules from putting it
+    # back on, which is as much a change to the house as either of those.
+    ("PUT", "/v1/relays/porch-light/automatic", {"automatic": False}),
 ]
 
 #: Every route that only reads it.
@@ -177,6 +180,22 @@ class TestTheRefusalIsUsable:
         client.put("/v1/relays/porch-light", json={"on": not before}, headers=CSRF)
 
         assert relay_backend.is_on(17) is before
+
+    def test_a_viewer_cannot_take_a_relay_away_from_the_rules(
+        self, as_role: LoginAs, relay_backend: MockRelayBackend
+    ) -> None:
+        """Refused before anything is stored, and before the light is switched off."""
+        operator = as_role(Role.OPERATOR)
+        operator.put("/v1/relays/porch-light", json={"on": True}, headers=CSRF)
+        client = as_role(Role.VIEWER)
+
+        response = client.put(
+            "/v1/relays/porch-light/automatic", json={"automatic": False}, headers=CSRF
+        )
+
+        assert response.status_code == HTTPStatus.FORBIDDEN
+        assert client.get("/v1/relays/porch-light").json()["automatic"] is True
+        assert relay_backend.is_on(17) is True
 
 
 class TestTheKeyIsNotAPerson:

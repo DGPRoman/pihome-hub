@@ -177,3 +177,34 @@ class TestTheSessionsTable:
         ).fetchone()[0]
 
         assert "WITHOUT ROWID" in sql
+
+
+class TestTheAutomationOffTable:
+    @pytest.fixture
+    def connection(self, tmp_path: Path) -> Iterator[sqlite3.Connection]:
+        with connect(tmp_path / "hub.db") as connection:
+            migrate(connection)
+            yield connection
+
+    def _insert(self, connection: sqlite3.Connection, relay_id: str) -> None:
+        connection.execute(
+            "INSERT INTO automation_off (relay_id, turned_off_at)"
+            " VALUES (?, '2026-10-01T21:00:00+00:00')",
+            (relay_id,),
+        )
+
+    def test_it_starts_empty_so_every_relay_is_automatic(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """No row is what automatic means, so an upgrade changes no relay's behaviour."""
+        assert connection.execute("SELECT count(*) FROM automation_off").fetchone()[0] == 0
+
+    def test_one_row_per_relay(self, connection: sqlite3.Connection) -> None:
+        self._insert(connection, "porch-light")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            self._insert(connection, "porch-light")
+
+    def test_when_it_was_turned_off_is_required(self, connection: sqlite3.Connection) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO automation_off (relay_id) VALUES ('porch-light')")
