@@ -222,6 +222,7 @@ of these:
 | The reading repeated a value | A rule fires on a change. A sensor that reports on an interval only fires the first push of a run; the recorded line shows `rules_fired=[]` with the value unchanged |
 | It is not dark yet | Raise the log level and look for `rule skipped: not dark yet` |
 | The rule is disabled | `GET /v1/automation/rules` still lists it, with `"enabled":false` — a disabled rule is reported, not omitted |
+| Automation is off for the relay | `GET /v1/relays/{id}` shows `"automatic":false`, and at DEBUG the log says `rule skipped: automation is off for its relay`. `PUT /v1/relays/{id}/automatic` with `{"automatic": true}` hands it back |
 
 ```bash
 PIHOME_LOG_LEVEL=DEBUG   # in hub.env; sun times and skipped rules are logged at DEBUG
@@ -242,6 +243,13 @@ moves on its own, it is a rule firing on a genuine transition, which the log wil
 
 `GET /v1/relays/{id}` carries `hold_expires_at`: non-null means a revert is scheduled and
 says when. Null right after you set a relay is correct — your write called the hold off.
+
+To keep the rules off a light altogether, turn its automation off with
+`PUT /v1/relays/{id}/automatic` and `{"automatic": false}`. That switches it off, and
+nothing the hub's rules decide moves it again until automation is turned back on — a
+restart included. A program acting for the house, such as a camera service, is expected to
+read the same `automatic` field and hold back too; one that still switches the light is
+not honouring it, and the hub's log shows its write as a plain `relay set`.
 
 ## The web app shows nothing
 

@@ -46,12 +46,14 @@ class TestListRelays:
                     "id": "porch-light",
                     "label": "Porch light",
                     "on": False,
+                    "automatic": True,
                     "hold_expires_at": None,
                 },
                 {
                     "id": "gate-light",
                     "label": "Gate light",
                     "on": False,
+                    "automatic": True,
                     "hold_expires_at": None,
                 },
             ]
@@ -69,6 +71,7 @@ class TestReadOneRelay:
             "id": "porch-light",
             "label": "Porch light",
             "on": False,
+            "automatic": True,
             "hold_expires_at": None,
         }
 

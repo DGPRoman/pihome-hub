@@ -25,7 +25,13 @@ from pihome_hub.api.v1.relays import router as relays_router
 from pihome_hub.api.v1.sensors import ingest_router, read_router
 from pihome_hub.api.v1.session import router as session_router
 from pihome_hub.api.v1.users import router as users_router
-from pihome_hub.automation import AutomationEngine, AutomationError, SunClock, load_automation
+from pihome_hub.automation import (
+    AutomationEngine,
+    AutomationError,
+    RelayAutomationStore,
+    SunClock,
+    load_automation,
+)
 from pihome_hub.config import Settings, get_settings
 from pihome_hub.devices import (
     DeviceConfigError,
@@ -94,10 +100,20 @@ def build_device_registry(settings: Settings) -> DeviceRegistry:
 def build_automation_engine(
     settings: Settings, relays: RelayService, sensors: SensorStore
 ) -> AutomationEngine:
-    """Assemble the automation engine, validating that its rules refer to real things."""
+    """Assemble the automation engine, validating that its rules refer to real things.
+
+    Opens nothing: which relays have their automation off is read by the lifespan,
+    once the database is known to be there.
+    """
     config = load_automation(settings.automation_config_path)
     sun = SunClock(config.location) if config.location is not None else None
-    return AutomationEngine(relays, config.rules, sun=sun, sensors=sensors)
+    return AutomationEngine(
+        relays,
+        config.rules,
+        sun=sun,
+        sensors=sensors,
+        relay_automation=RelayAutomationStore(settings.database_path),
+    )
 
 
 def check_configuration(settings: Settings, relays: RelayService) -> None:
@@ -140,6 +156,26 @@ def check_device_key(settings: Settings, devices: DeviceRegistry) -> None:
     raise DeviceConfigError(msg)
 
 
+def _restore_automatic(engine: AutomationEngine) -> None:
+    """Give the engine back the relays a person turned automation off for.
+
+    Not fatal, for the reason the device housekeeping in the lifespan is not: a
+    database this cannot read is reported by ``prepare_database`` before the server
+    starts, and refusing to start here would take the rules away from every relay to
+    keep them away from one. An error rather than a warning, though, because unlike
+    that housekeeping this leaves a person's instruction unkept.
+    """
+    try:
+        turned_off = engine.restore_automatic()
+    except StorageError:
+        logger.exception(
+            "could not read which relays have automation off; every relay starts automatic"
+        )
+        return
+    if turned_off:
+        logger.info("automation is off for some relays", extra={"relays": sorted(turned_off)})
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Acquire and release the relay service for the lifetime of the process.
@@ -166,6 +202,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if getattr(app.state, "automation", None) is None:
         app.state.automation = build_automation_engine(settings, service, sensors)
     engine: AutomationEngine = app.state.automation
+    # Before the first reading can arrive, or a rule would switch on a light somebody
+    # told the house to leave alone.
+    _restore_automatic(engine)
 
     if getattr(app.state, "devices", None) is None:
         app.state.devices = build_device_registry(settings)

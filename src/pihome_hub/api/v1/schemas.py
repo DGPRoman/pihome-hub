@@ -21,6 +21,14 @@ class RelayState(BaseModel):
     id: str = Field(description="Stable identifier, as configured", examples=["porch-light"])
     label: str = Field(description="Human-readable name", examples=["Porch light"])
     on: bool = Field(description="True when the circuit is energised")
+    automatic: bool = Field(
+        description=(
+            "False when a person has turned this relay's automation off, and true "
+            "otherwise. While it is false the hub's rules leave the relay alone, and a "
+            "client switching relays on the house's behalf — a camera service, say — "
+            "should leave it alone too. A person can still switch it by hand."
+        ),
+    )
     hold_expires_at: datetime | None = Field(
         default=None,
         description=(
@@ -44,6 +52,22 @@ class RelayStateRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     on: bool = Field(description="True to energise, false to de-energise")
+
+
+class RelayAutomaticRequest(BaseModel):
+    """Whether the hub's rules may switch a relay, at ``PUT /v1/relays/{relay_id}/automatic``.
+
+    Strict, like :class:`RelayStateRequest`: only a JSON boolean is accepted.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    automatic: bool = Field(
+        description=(
+            "False to turn the relay's automation off — which also switches it off — "
+            "and true to hand it back to the rules"
+        )
+    )
 
 
 class RelayCollection(BaseModel):

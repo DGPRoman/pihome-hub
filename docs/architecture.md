@@ -86,7 +86,9 @@ Three rules, each of which holds today and is asserted by
    statement about any particular relay. `accounts` imports `storage`, and that is the
    only edge between the two — rows in one direction, never relays in the other.
    `devices` imports `storage` and nothing else: a device is polled and reported, and
-   anything that let one switch a circuit would be `automation`'s to say.
+   anything that let one switch a circuit would be `automation`'s to say. `automation`
+   imports `storage` as well, for one table: the relays a person has turned automation
+   off for, which is an instruction that has to outlast the process.
 3. **Only `app.py` chooses a backend.** The route modules never import `mock` or `gpio`;
    they receive a `RelayService` that already has one.
 
@@ -235,10 +237,26 @@ works, and the program's own courtesy — reading a relay before switching it, a
 one that is already on to whoever switched it — is the program's to keep, not the hub's to
 enforce.
 
-`release_hold` is the one method on the engine reachable from outside the event loop — the
-relay routes are sync `def`, so Starlette runs them in a worker thread. `Task.cancel` may
-only be called on the loop that owns the task, so each hold records its loop and the
-cancellation goes through `call_soon_threadsafe`.
+**Automation off.** A person can also take a relay away from the rules altogether, with
+`PUT /v1/relays/{id}/automatic`. That is not a hold, and the two words are kept apart on
+purpose: a hold is a rule's own countdown to undo itself, while automation off is somebody
+standing under a light telling the house to leave it alone. Turning it off releases any
+hold, switches the relay off if it is on, and stores the choice in the `automation_off`
+table; the engine keeps a copy in memory, read back by the lifespan at startup, and
+consults it at the moment a rule writes. A rule that finds its relay's automation off
+leaves the relay alone in both directions and is not reported as fired. The rule's check
+and its write happen under one lock, and turning automation off takes the same lock, so a
+rule cannot check, lose the race to a person, and switch the light back on regardless.
+
+The hub keeps its own rules to that, and can do no more. A program holding the relay key
+writes through the same routes a person's script does, and nothing in a request says which
+it is — so a camera service reading `automatic` before switching a relay on, and leaving
+it alone while it is `false`, is the program's to keep, like its other courtesies above.
+
+`release_hold` and `set_automatic` are the methods on the engine reachable from outside the
+event loop — the relay routes are sync `def`, so Starlette runs them in a worker thread.
+`Task.cancel` may only be called on the loop that owns the task, so each hold records its
+loop and the cancellation goes through `call_soon_threadsafe`.
 
 Traffic goes the other way too, and for a while it went the wrong way. Everything below
 `RelayService` is synchronous and blocking: a `threading.RLock`, and then a write to a GPIO
@@ -485,8 +503,8 @@ looking in the wrong place.
 
 ## What is deliberately absent
 
-- **No readings in the database.** There is a SQLite file now, and it holds accounts and
-  nothing else. Sensor readings stay the latest per device, in memory: a restart forgets
+- **No readings in the database.** There is a SQLite file now, and it holds accounts,
+  where devices announced themselves, and which relays have automation off. Sensor readings stay the latest per device, in memory: a restart forgets
   them and every device reports as never-having-reported until it pushes again, which is
   a truthful thing to say rather than a gap.
 - **No history.** Trends need retention and a pruning story on a card with finite write
